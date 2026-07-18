@@ -1,0 +1,73 @@
+{
+  "name": "copperhead",
+  "version": "0.1.0",
+  "description": "Cursor for circuit boards: an AI agent that designs, documents, and validates real PCBs on KiCad repositories",
+  "license": "Apache-2.0",
+  "author": "Animesh Chouhan <animeshchouhan@outlook.com>",
+  "homepage": "https://copperhead.chouhan.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chouhanindustries/copperhead.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chouhanindustries/copperhead/issues"
+  },
+  "keywords": [
+    "kicad",
+    "pcb",
+    "eda",
+    "hardware",
+    "electronics",
+    "schematic",
+    "erc",
+    "drc",
+    "ai-agent",
+    "llm",
+    "cli"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "copperhead": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run typecheck && npm run build",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "commander": "^12.1.0",
+    "execa": "^9.5.2",
+    "openai": "^4.87.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitepress": "^1.6.4",
+    "vitest": "^3.0.8"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "esbuild@0.21.5": true
+  }
+}

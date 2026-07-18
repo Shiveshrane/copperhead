@@ -1,0 +1,97 @@
+import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { listSymbols, pinNets, type SchematicSymbol } from '../kicad/sexp.js';
+
+/**
+ * Doc-vs-schematic drift check (AC-2.3). BOM.md and PINOUT.md use fixed table
+ * columns (the parseable contract, design D9); free-prose docs are not checked.
+ */
+export interface DriftMismatch {
+  doc: string;
+  claim: string;
+  actual: string;
+}
+
+export interface TableRow {
+  cells: string[];
+}
+
+export function parseMarkdownTables(md: string): TableRow[] {
+  const rows: TableRow[] = [];
+  for (const line of md.split('\n')) {
+    const t = line.trim();
+    if (!t.startsWith('|')) continue;
+    const cells = t
+      .split('|')
+      .slice(1, -1)
+      .map((c) => c.trim());
+    if (cells.every((c) => /^:?-+:?$/.test(c))) continue; // separator row
+    rows.push({ cells });
+  }
+  return rows;
+}
+
+const isHeader = (row: TableRow): boolean =>
+  row.cells.some((c) => /^(refdes|pin)$/i.test(c));
+
+export async function checkDrift(repoRoot: string, docsDir: string, schematic: string): Promise<DriftMismatch[]> {
+  const mismatches: DriftMismatch[] = [];
+  const schPath = path.join(repoRoot, schematic);
+  const symbols = await listSymbols(schPath);
+  const byRef = new Map<string, SchematicSymbol>(symbols.map((s) => [s.ref, s]));
+
+  const bomPath = path.join(repoRoot, docsDir, 'BOM.md');
+  if (existsSync(bomPath)) {
+    const rows = parseMarkdownTables(await readFile(bomPath, 'utf8')).filter((r) => !isHeader(r));
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const [ref, value, footprint] = row.cells;
+      if (!ref) continue;
+      seen.add(ref);
+      const sym = byRef.get(ref);
+      if (!sym) {
+        mismatches.push({ doc: 'BOM.md', claim: `${ref} exists`, actual: `${ref} not in schematic` });
+        continue;
+      }
+      if (value !== undefined && value !== sym.value) {
+        mismatches.push({ doc: 'BOM.md', claim: `${ref} value ${value}`, actual: `${ref} value ${sym.value}` });
+      }
+      if (footprint !== undefined && footprint !== '' && footprint !== sym.footprint) {
+        mismatches.push({
+          doc: 'BOM.md',
+          claim: `${ref} footprint ${footprint}`,
+          actual: `${ref} footprint ${sym.footprint}`,
+        });
+      }
+    }
+    for (const sym of symbols) {
+      if (!seen.has(sym.ref)) {
+        mismatches.push({ doc: 'BOM.md', claim: `${sym.ref} absent`, actual: `${sym.ref} (${sym.value}) in schematic` });
+      }
+    }
+  }
+
+  const pinoutPath = path.join(repoRoot, docsDir, 'PINOUT.md');
+  if (existsSync(pinoutPath)) {
+    const nets = await pinNets(schPath);
+    const netOf = new Map(nets.map((p) => [`${p.ref}:${p.pinNumber}`, p.net]));
+    const rows = parseMarkdownTables(await readFile(pinoutPath, 'utf8')).filter((r) => !isHeader(r));
+    for (const row of rows) {
+      const [ref, pinNumber, , net] = row.cells;
+      if (!ref || !pinNumber) continue;
+      const k = `${ref}:${pinNumber}`;
+      if (!netOf.has(k)) {
+        mismatches.push({ doc: 'PINOUT.md', claim: `${k} exists`, actual: `${k} not in schematic` });
+        continue;
+      }
+      const actual = netOf.get(k) ?? 'NC';
+      const claimed = net === undefined || net === '' ? 'NC' : net;
+      if (claimed !== actual) {
+        mismatches.push({ doc: 'PINOUT.md', claim: `${k} net ${claimed}`, actual: `${k} net ${actual}` });
+      }
+    }
+  }
+
+  return mismatches;
+}

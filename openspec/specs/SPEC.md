@@ -1,0 +1,459 @@
+# copperhead — Technical Specification
+
+**Cursor for circuit boards.** An AI agent that designs, documents, and validates real PCBs from a prompt, working directly on existing KiCad repositories.
+
+License: Apache-2.0 · Runtime: Node.js ≥ 20 · Language: TypeScript
+
+**copperhead is open source.** The entire tool — agent core, prompts, tools, viewer — is public under Apache-2.0, developed in the open on GitHub with public issues and PRs. It builds exclusively on an open stack (KiCad, kicad-cli, OpenSpec) and produces open, inspectable artifacts: every design decision, constraint, and rationale it writes is plain markdown and JSON in the user's own repo — no proprietary formats, no lock-in, no black box. This is a Chouhan Industries project: the same commitment that puts every hardware schematic in public applies to the tool that designs them. Open source is also the distribution strategy — hardware engineers trust what they can inspect. (Commercial layer, later: hosted agent for private repos; the open core stays complete and usable forever.)
+
+---
+
+## 1. Product definition
+
+### 1.1 What it is
+
+An AI product-development agent for hardware: from a product brief to manufacturable files, firmware, and a build plan. Two modes:
+
+**Mode A — Designer (`copperhead create`).** Input: a product description, requirements, and constraints in natural language. The agent runs the full design pipeline: spec → architecture → part selection → schematic → layout intent → verification → output package.
+
+**Mode B — Co-designer (`copperhead do`).** Operates on an existing KiCad repository the way a coding agent operates on a codebase (the core loop, §4). Mode A is Mode B run repeatedly against a growing repo — same loop, same tools, same verification.
+
+The agent:
+
+- Reads and edits real `.kicad_sch` and `.kicad_pcb` files (s-expression text format)
+- Maintains a set of markdown design docs ("docs-as-memory") that describe the design's intent, constraints, and rationale
+- Propagates any change across every artifact that references it (schematic, BOM, pinout, docs)
+- Verifies its own work by running `kicad-cli` ERC/DRC and iterating until checks pass
+- Records a one-line rationale next to every decision so future changes don't silently undo past reasoning
+
+### 1.2 What it is not
+
+- Not an autorouter (Quilter/DeepPCB territory) — routing stays human or delegated
+- Not a new editor (Flux territory) — no walled garden; the user's KiCad install remains the editor
+- Not the engineer of record — human signs off; the agent must never claim a design is fab-ready beyond "ERC/DRC clean"
+
+### 1.3 Core invariants
+
+1. **Nothing starts without a spec.** The agent cannot touch a KiCad file until a validated OpenSpec proposal exists for the change (`openspec validate --change <id>` passes). The edit tools (`edit_file`, `write_file`) are hard-locked — not prompt-discouraged, but unavailable in the tool list — until the proposal validates. Every edit is therefore traceable to a documented intent.
+2. **Nothing is "done" until the tools agree.** Every mutation of a KiCad file must be followed by an ERC (schematic) or DRC (board) run before the agent reports success. If violations exist, the agent reads the report and fixes them or explains why it cannot.
+
+Spec-gated in, verification-gated out: the design can't drift from its requirements, because drift is a build failure.
+
+---
+
+## 2. Architecture
+
+```
+┌────────────┐   prompt    ┌─────────────────────────────┐
+│  CLI (cmd)  ├────────────►│        Agent core           │
+└────────────┘             │  provider-agnostic LLM loop │
+                           │  (OpenAI GPT-5 / Claude)    │
+                           └──────┬──────────────────────┘
+                                  │ tool calls
+              ┌───────────────────┼───────────────────────┐
+              ▼                   ▼                       ▼
+      ┌──────────────┐   ┌──────────────┐        ┌───────────────┐
+      │  File tools  │   │ KiCad tools  │        │  Memory tools │
+      │ read/write/  │   │ erc / drc /  │        │ design docs   │
+      │ edit/search  │   │ export-svg   │        │ load/update   │
+      └──────┬───────┘   └──────┬───────┘        └──────┬────────┘
+             ▼                  ▼                        ▼
+        .kicad_sch /       kicad-cli               docs/*.md
+        .kicad_pcb         (subprocess)            BOM, pinout…
+```
+
+### 2.1 Repo layout (this project)
+
+```
+copperhead/
+├── src/
+│   ├── cli.ts              # entry: commander-based CLI
+│   ├── agent/
+│   │   ├── loop.ts         # tool-use loop, turn budget, retry
+│   │   ├── providers/
+│   │   │   ├── openai.ts   # GPT-5 via OpenAI SDK (tool calling)
+│   │   │   └── anthropic.ts# Claude via Anthropic SDK
+│   │   ├── prompts.ts      # system prompt + task templates
+│   │   └── tools.ts        # tool schemas + dispatch
+│   ├── kicad/
+│   │   ├── cli.ts          # kicad-cli wrapper (erc, drc, export svg)
+│   │   ├── sexp.ts         # minimal s-expression reader (validation only)
+│   │   └── report.ts       # ERC/DRC .rpt / JSON parser → structured violations
+│   ├── memory/
+│   │   ├── scaffold.ts     # `init`: generate docs skeleton from schematic
+│   │   └── drift.ts        # doc-vs-schematic consistency checker
+│   ├── viewer/             # Phase 2
+│   │   ├── server.ts       # express + ws, serves live board view
+│   │   └── watch.ts        # chokidar watcher → re-export SVG → ws push
+│   └── util/
+├── test/
+│   └── fixtures/           # tiny known-good KiCad project for tests
+├── docs/                   # this spec, architecture notes
+├── package.json            # bin: { "copperhead": "dist/cli.js" }
+├── tsconfig.json
+├── .env.example            # OPENAI_API_KEY= / ANTHROPIC_API_KEY=
+└── LICENSE                 # Apache-2.0
+```
+
+### 2.2 Target repo layout (user's hardware project)
+
+`copperhead init` establishes/expects this convention:
+
+```
+their-board/
+├── hardware/
+│   ├── <name>.kicad_pro
+│   ├── <name>.kicad_sch    # possibly hierarchical, multiple sheets
+│   └── <name>.kicad_pcb
+├── docs/
+│   ├── SPEC.md             # what the device is; top-level constraints & budgets
+│   ├── BOM.md              # every part: refdes, MPN, value, package, WHY chosen
+│   ├── PINOUT.md           # MCU pin assignment table + strapping/RTC notes
+│   ├── SUBSYSTEMS.md       # per-sheet values & reasoning (regulator, charger…)
+│   └── LAYOUT.md           # placement/routing intent: keepouts, pours, ESD placement
+└── .copperhead/
+    ├── config.json         # paths, model, budgets (see §5)
+    └── runs/               # transcript of each `do` run (audit trail)
+```
+
+---
+
+## 2.5 End-to-end I/O contract
+
+### Inputs (Mode A)
+
+```
+copperhead create --brief brief.md
+```
+
+`brief.md` — the product brief, free-form markdown:
+
+- **What it is:** "a pocket-size Morse key that types into any device as a Bluetooth keyboard"
+- **Requirements:** features, interfaces (USB-C, BLE), user interactions
+- **Constraints:** power budget, size envelope, unit cost target, battery life, cert targets
+- **Preferences:** MCU family, connector types, no-go parts, assembly method (hand-solder vs SMT fab)
+
+Anything unstated → the agent proposes defaults in SPEC.md and flags them `ASSUMED` for review. Ambiguity resolution is interactive: the agent asks up to N clarifying questions before starting (configurable, 0 for demo mode).
+
+### Outputs (the deliverable package, `outputs/`)
+
+| Artifact | Format | Produced by |
+|---|---|---|
+| Design docs | SPEC/BOM/PINOUT/SUBSYSTEMS/LAYOUT.md | agent (§2.2) |
+| Schematic | .kicad_sch | agent edits, ERC-clean |
+| Board | .kicad_pcb | agent edits, DRC-clean |
+| **Gerbers + drill** | .zip (per JLC/PCBWay profile) | `kicad-cli pcb export gerbers/drill` |
+| **Board outline / enclosure ref** | .dxf, .step | `kicad-cli pcb export dxf/step` |
+| **Renders** | .svg (sch + pcb), 3D .png | `kicad-cli export svg`, pcb render |
+| **BOM for ordering** | .csv (refdes, MPN, qty, vendor links) | generated from BOM.md |
+| **Firmware scaffold** | src/ (per MCU HAL: ESP-IDF / Zephyr / Arduino) | agent, compiles clean |
+| **Pin map header** | pins.h — generated from PINOUT.md, single source of truth | drift-checked |
+| **Dev plan** | DEVPLAN.md: bring-up steps, test points, what to meter first, risk list, prototype order plan | agent |
+
+Firmware scope: scaffold + pin definitions + driver stubs + one working happy-path (e.g. key press → BLE HID report). "Compiles clean against the vendor toolchain" is the verification gate — same philosophy as ERC/DRC: nothing is done until the toolchain agrees.
+
+### The pipeline (Mode A internally)
+
+**Run-to-completion guarantee:** once `create` starts, it always finishes with the complete output package. Gates are *quality checks the agent must satisfy*, not stops that wait for a human. By default the pipeline is fully autonomous: unstated decisions get `ASSUMED` flags, imperfect layout gets the `Draft quality` label, and the run ends with gerbers, firmware, renders, and DEVPLAN.md on disk — an end product, reviewable as a whole. `--interactive` turns the two human gates (spec approval, pre-export review) back on for users who want them.
+
+```
+brief.md
+  → SPEC.md (budgets, ASSUMED flags)          [gate: spec is self-consistent]
+  → architecture (block diagram in SUBSYSTEMS.md)
+  → part selection (BOM.md with rationale)     [gate: check_drift]
+  → schematic, sheet by sheet                  [gate: ERC after every sheet]
+  → first-draft layout (see below)             [gate: DRC]
+  → outputs package                            [gate: all exports succeed]
+  → firmware scaffold                          [gate: build passes]
+  → DEVPLAN.md
+```
+
+Each stage is a `do`-loop run with a stage-specific prompt. State lives in the repo (docs + files), so `create` is resumable: kill it at any stage, re-run, it continues from the docs.
+
+### First-draft layout (explicitly non-optimal, explicitly useful)
+
+The agent produces an **initial placement and routing plan** — correct, not optimal — and says so:
+
+- **Placement:** rule-driven, from LAYOUT.md intent: connectors on edges, decoupling caps at their IC pins, ESD at connectors, antenna keepout honored, crystal next to MCU, user-facing parts (buttons, LEDs) where the brief puts them. Written as actual coordinates into the .kicad_pcb.
+- **Routing:** power nets and short critical nets routed by rule (USB differential pair length-matched via KiCad's tools where possible); remaining nets left as ratsnest or routed naively. Every routed net must pass DRC; nothing hand-wavy.
+- **Honesty gate:** LAYOUT.md gets a `## Draft quality` section auto-written by the agent, listing exactly what is fine (budgets, keepouts, DRC-clean) and what a human or a specialist tool (Quilter, autorouter) should redo before fab. Non-optimal is acceptable; unlabeled non-optimal is not.
+- **Positioning:** this makes layout tools *complements, not competitors* — copperhead produces the DRC-clean draft and constraints file they optimize from.
+
+Delta 4 framing: a first-draft board that passes DRC in an hour vs. a blank canvas that takes a specialist a week. Optimization is iteration; the blank canvas was the bottleneck.
+
+## 2.6 OpenSpec integration — the documentation layer
+
+copperhead adopts [OpenSpec](https://github.com/Fission-AI/OpenSpec) (spec-driven development framework, Node ≥ 20 — same runtime) as the user-facing docs/change-management layer on top of the design docs.
+
+### Two-tier memory model
+
+| Tier | Location | Owner | Contents |
+|---|---|---|---|
+| **Spec tier (OpenSpec)** | `openspec/specs/` | user-reviewable truth | Requirements & scenarios per capability: power, connectivity, ui, enclosure, firmware. What the product must do and under what constraints |
+| **Design tier (copperhead)** | `docs/` + `.copperhead/` | agent working memory | How it's achieved: BOM rationale, pinout, subsystem values, layout intent — plus the machine-readable constraint memory (below) |
+
+### Constraint memory
+
+The agent maintains `.copperhead/constraints.json` — a live, machine-readable registry built **simultaneously with the docs**: every time a constraint is stated (brief), assumed (flagged `ASSUMED`), or discovered (datasheet), it lands in both the human doc and the registry in the same tool turn:
+
+```json
+{
+  "power.sleep_current_uA":  { "max": 25,  "source": "openspec/specs/power/spec.md#R2",
+                               "affects": ["U2", "R7-absent", "GPIO-pullups"] },
+  "rf.antenna_keepout_mm":   { "min": 5,   "source": "docs/LAYOUT.md", "affects": ["zone:top"] },
+  "pins.strapping":          { "forbidden": ["GPIO0","GPIO3","GPIO45","GPIO46"],
+                               "source": "esp32-s3 datasheet §2.4" }
+}
+```
+
+Loaded into every run's system prompt; `check` validates the design against it mechanically where possible (leakage sums, keepout geometry, forbidden pins). The `affects` field is what makes propagation reliable — change a constraint and the agent knows exactly which parts to revisit.
+
+### Change workflow (OpenSpec propose → apply → archive)
+
+- `copperhead do "<request>"` first generates `openspec/changes/<id>/` (proposal.md, spec deltas, tasks.md), then implements against it; the ERC/DRC-clean commit archives the change. Every hardware change gets a paper trail: *why → what spec changed → what files changed → verification result*
+- `copperhead create` seeds `openspec/specs/` from the brief as stage one — requirements with scenarios ("Given the device sleeps, when idle 1 year, then battery ≥ 20%") become the testable source that SPEC.md budgets derive from
+- In `--interactive` mode, the human approves the proposal; in autonomous mode it's written and auto-approved with an `AUTO` marker — reviewable after the fact, never lost
+- `openspec validate` runs inside `copperhead check`
+
+### Trigger mechanics
+
+OpenSpec is never user-triggered; copperhead drives it as subprocess tools (same pattern as kicad-cli):
+
+| When | copperhead runs | Effect |
+|---|---|---|
+| `init` / `create` start | `openspec init` (once) | Scaffolds `openspec/`; agent seeds `specs/` from the brief |
+| `do` — plan step | agent writes `openspec/changes/<id>/`, then `openspec validate --change <id>` | **Edit tools stay locked until the proposal validates.** The plan step *is* the proposal |
+| `do` — after ERC/DRC pass + commit | `openspec archive <id>` | Deltas merge into `specs/`; change record closed by the same code path that committed |
+| `check` | `openspec validate` | Part of the standard gate set |
+| `--interactive` only | pause after proposal validation | Human y/n before edits unlock — the single manual trigger |
+
+This kills the last "docs drift" failure mode: requirements (openspec) → budgets (SPEC.md) → constraints (constraints.json) → design (KiCad) form a chain where every link is checked by tooling, not memory.
+
+## 3. CLI surface (Phase 1)
+
+```
+copperhead create --brief brief.md   # Mode A: full pipeline (§2.5)
+copperhead init [--path hardware/]
+    Detect .kicad_sch/.kicad_pcb, parse symbols/footprints/nets,
+    generate docs/ skeleton pre-filled with the real BOM and pinout
+    extracted from the schematic. Idempotent; never overwrites
+    hand-edited docs without --force.
+
+copperhead do "<change request>" [--model gpt-5|claude] [--max-turns N]
+    The core loop. See §4.
+
+copperhead check          (alias: copperhead verify)
+    Run ERC + DRC + doc-drift check; exit non-zero on violations.
+    No LLM calls. Usable as CI step / pre-commit hook.
+
+copperhead sync [--dry-run]
+    Verify the entire design state for inconsistencies — doc tables vs
+    schematic, constraints.json vs docs and openspec specs, PINOUT.md vs
+    pins.h, DECISIONS/CHANGELOG coverage — then resolve the drift via a
+    spec-gated agent run (same gates as `do`). Truth precedence: KiCad
+    files are ground truth for as-built facts; openspec specs and SPEC.md
+    budgets are ground truth for requirements. An inconsistency that
+    implies a requirement violation is flagged for the human, never
+    silently rewritten. `--dry-run` prints the full inconsistency report
+    and writes nothing. Idempotent: a second run finds nothing to do.
+
+copperhead explain <refdes|net|pin>       # stretch
+    Answer "why is R7 here?" from docs + schematic context.
+
+copperhead watch                          # Phase 2
+    Start the live viewer (see §6).
+```
+
+Global flags: `--repo <path>`, `--dry-run` (propose diff, don't write), `--json` (machine-readable output).
+
+---
+
+## 4. The agent loop (`copperhead do`)
+
+### 4.0 The workflow in plain words (canonical description — use in README/pitch)
+
+It's a loop, and it looks a lot like pair-programming, except the codebase is a circuit board.
+
+1. **Start from the docs.** Every decision lives in the design docs, so the agent reads those first and knows the whole design, not just the part in front of it.
+2. **Talk through the change.** Describe what you want ("add an external key jack", "cut the sleep current"). The agent proposes the parts and circuit; you push back until the reasoning holds up.
+3. **Edit the real files.** The agent writes the changes straight into the KiCad schematic and the design docs, using the same part names and net names everywhere so nothing drifts.
+4. **Propagate.** Change one value, like the charge current or a pin, and it carries across every doc and the schematic that references it. This is the boring, easy-to-get-wrong step the agent is best at.
+5. **Check the work.** The agent runs ERC/DRC, reads the errors back, and fixes them. Nothing is "done" until the tools agree.
+6. **Write down why.** Every real decision gets a one-line reason next to it, so the next change doesn't quietly undo it.
+
+§4.1 below is this loop made precise; §2.6 adds the OpenSpec proposal wrapper around steps 1–2 and the constraint registry behind steps 4–5.
+
+### 4.1 Sequence
+
+1. **Load memory.** Read all `docs/*.md` + the schematic file list into the system context. Docs are small by design (< ~2k lines total); include them whole.
+2. **Plan.** Agent states, in one short block: what will change, which files are affected, which constraints are at risk (e.g. sleep-current budget).
+3. **Edit.** Agent uses tools to modify KiCad files and docs. Edits to `.kicad_sch`/`.kicad_pcb` are **text edits on the s-expression source** (search/replace with context anchors) — no full-file regeneration, ever. Same net names and refdes everywhere.
+4. **Verify.** Agent runs `run_erc` (always) and `run_drc` (if the .kicad_pcb changed). Parses violations.
+5. **Repair.** If violations: fix and re-run, up to `maxRepairCycles` (default 5). If still failing: revert to the pre-run snapshot and report failure with the violation list.
+6. **Propagate.** Agent runs `check_drift`; any doc that references a changed value/part/pin must be updated in the same run.
+7. **Rationale.** Every non-trivial decision gets a one-line "why" written into the relevant doc.
+8. **Commit.** `git commit` with a structured message (`copperhead: <request>\n\n<summary of edits + verification result>`). Requires clean working tree at start (§7 safety).
+
+### 4.2 Tool schemas
+
+| Tool | Signature | Notes |
+|---|---|---|
+| `read_file` | (path) → text | Repo-relative, sandboxed to repo root |
+| `edit_file` | (path, old_string, new_string) → ok | Exact-match anchored replace; fails if not unique |
+| `write_file` | (path, content) → ok | New files only (docs); refuses to overwrite .kicad_* |
+| `search` | (regex, glob?) → matches | ripgrep-style over repo |
+| `list_symbols` | (sch_path) → [{ref, value, footprint, sheet}] | From s-expression parse |
+| `list_nets` | (sch_path) → [net names] | |
+| `run_erc` | () → {violations: [...]} | `kicad-cli sch erc --format json --exit-code-violations` |
+| `run_drc` | () → {violations: [...]} | `kicad-cli pcb drc --format json --exit-code-violations` |
+| `export_svg` | (sch\|pcb) → path | For viewer + before/after diffing |
+| `check_drift` | () → [{doc, claim, actual}] | Compares doc tables (BOM/pinout) against parsed schematic |
+
+### 4.3 System prompt — key rules (verbatim requirements)
+
+- You are a hardware design agent working on real KiCad source files. Edit s-expressions surgically; never regenerate a whole file.
+- You cannot edit any file until your change proposal validates (§1.3 invariant 1). Write the proposal first; the edit tools appear only after it passes.
+- The design docs are the memory. Read them before proposing anything; update them with everything you change.
+- Hold **all** constraints simultaneously: electrical budgets (e.g. sleep current), voltage ranges, package availability, strapping pins, RTC-capability, antenna keepouts. A part that satisfies the obvious constraint but violates a budget is a bug.
+- Check the MCU strapping table before assigning any pin. Check quiescent/leakage current of every part against the power budget in SPEC.md.
+- Nothing is done until ERC (and DRC when applicable) passes. Read the violation report; do not guess.
+- Write a one-line rationale next to every decision. If you remove a part, record why the absence is intentional (a missing pullup can look like a mistake).
+- If a request would violate a documented budget or constraint, stop and say so — do not silently comply.
+
+### 4.4 Provider abstraction
+
+```ts
+interface Provider {
+  chat(messages: Msg[], tools: ToolSchema[], opts): Promise<Turn>;
+}
+```
+
+- `openai.ts`: GPT-5 via chat completions + tool calling (hackathon shared key)
+- `anthropic.ts`: Claude via messages API + tool use
+- Selection: `--model` flag > `COPPERHEAD_MODEL` env > config.json > default (whichever key is present)
+- Both providers must pass the same integration test on the fixture repo
+
+### 4.5 Budgets & failure modes
+
+- `maxTurns` default 40; `maxRepairCycles` 5; per-run token budget logged
+- On any unrecoverable failure: `git checkout` the snapshot, print the transcript path, exit 1
+- Rate-limit (429): exponential backoff ×3, then fail over to the other provider if a key exists
+
+---
+
+## 5. Config (`.copperhead/config.json`)
+
+```json
+{
+  "schematic": "hardware/open-telegraph.kicad_sch",
+  "board": "hardware/open-telegraph.kicad_pcb",
+  "docs": "docs/",
+  "model": "gpt-5",
+  "maxTurns": 40,
+  "budgets": { "sleep_current_uA": 25 }
+}
+```
+
+`budgets` is free-form; keys are surfaced verbatim into the system prompt so the agent treats them as hard constraints.
+
+---
+
+## 6. Phase 2 — Live viewer (`copperhead watch`)
+
+The "Cursor feel": see the board change as the agent works.
+
+- Express server on `localhost:3663`, single-page app (no build step; one HTML file)
+- Left pane: chat input → runs `copperhead do` in-process, streams agent turns (plan / edits / verify) over WebSocket
+- Right pane: schematic + board SVG, re-exported via `kicad-cli ... export svg` after every file mutation (chokidar watcher), pushed over WS, pinned zoom/pan preserved across reloads
+- Status bar: ERC/DRC state (red/amber/green), last-run rationale lines
+- Before/after: keep the pre-run SVG; toggle to flick between them
+
+Acceptance: type "add a second RGB LED on an RTC-capable pin" → watch schematic re-render + ERC flip green, with no manual refresh.
+
+## 7. Safety rails
+
+- Refuse to run `do` on a dirty git tree (offer `--allow-dirty` with snapshot via `git stash create`)
+- All file tools sandboxed to repo root; no network tools in Phase 1
+- `.env` in `.gitignore` from first commit; keys only via env vars — never written to any file, transcript, or commit
+- Transcripts in `.copperhead/runs/` redact anything matching `sk-[A-Za-z0-9_-]+`
+- The agent never invents MPNs: any new part must come with a datasheet-verifiable justification in BOM.md, flagged `UNVERIFIED` for human review
+
+## 8. Phase 3 — Integrations (post-hackathon roadmap; document, don't build)
+
+- **CI**: GitHub Action running `copperhead check` (ERC + DRC + drift) with a badge — hardware repos get a green check like software
+- **Simulation checkers**: ngspice (analog sanity), openEMS (EMC) as additional verify tools — architecture is checker-agnostic
+- **KiCad plugin**: chat panel inside KiCad via the IPC API — the full-Cursor endgame
+- **Part data**: live availability/pricing (Octopart/JLC), so "sourceable" becomes a checked constraint
+- **Format expansion**: Altium file support; the agent core is format-agnostic, only tools change
+- **Hosted**: private-repo SaaS, per-seat; payments via merchant-of-record (Dodo)
+
+## 9. Acceptance criteria
+
+Format: Given / When / Then. "Fixture" = the open-telegraph repo (or the tiny test project in `test/fixtures/`). All criteria are binary — they pass or they don't.
+
+### AC-1 · `copperhead init`
+
+- **AC-1.1** Given a KiCad repo with no `docs/`, when `copperhead init` runs, then `docs/SPEC.md`, `BOM.md`, `PINOUT.md`, `SUBSYSTEMS.md`, `LAYOUT.md` and `.copperhead/config.json` exist.
+- **AC-1.2** BOM.md contains one row per schematic symbol with real refdes, value, and footprint parsed from the `.kicad_sch` — not placeholders. Row count equals `list_symbols` count.
+- **AC-1.3** PINOUT.md contains the MCU's actual pin-to-net assignments parsed from the schematic.
+- **AC-1.4** Re-running `init` on the same repo exits 0 and changes no hand-edited file (idempotent). With modified docs and no `--force`, it refuses and lists what it would overwrite.
+- **AC-1.5** On a repo with no `.kicad_sch`, exits non-zero with a clear message (no stack trace).
+
+### AC-2 · `copperhead check`
+
+- **AC-2.1** On a clean fixture: exit 0, prints ERC ✓ DRC ✓ drift ✓, makes zero LLM calls (assert: no network to api.* hosts).
+- **AC-2.2** With a deliberately broken schematic (unconnected pin): exit non-zero, violation printed with sheet/location.
+- **AC-2.3** With a BOM.md value edited to disagree with the schematic (e.g. wrong resistor value): drift check fails and names the doc, the claim, and the actual value.
+- **AC-2.4** `--json` emits machine-readable results (parseable, stable keys).
+- **AC-2.5** Runs in < 60 s on the fixture.
+
+### AC-3 · `copperhead do` — core loop
+
+- **AC-3.1 (rename)** `do "rename net KEY_DAH to KEY_DASH"` → net renamed in every sheet it appears; PINOUT.md and SUBSYSTEMS.md updated; ERC exit 0; exactly one commit; no other net or doc line changed (diff inspected).
+- **AC-3.2 (constraint reasoning)** `do "move the key input to a different RTC-capable pin"` → chosen pin is RTC-capable AND not a strapping pin (GPIO0/3/45/46 on ESP32-S3); transcript shows the strapping table was consulted; schematic + PINOUT.md agree; ERC exit 0.
+- **AC-3.3 (add part)** `do "add a second RGB LED"` → new symbol with unique refdes, valid footprint from the existing library set, net connected to a real GPIO; BOM.md gains a row with MPN flagged `UNVERIFIED` and a one-line rationale; ERC exit 0.
+- **AC-3.4 (budget refusal)** `do "add a 100kΩ pullup on KEY_DAH"` (which would leak ~33 µA against the 25 µA budget) → agent **refuses or proposes an alternative**, citing the budget from SPEC.md. It must not silently comply. This is the money demo.
+- **AC-3.5 (repair loop)** Given an edit that first produces an ERC violation, the transcript shows: violation parsed → targeted fix → re-run → pass, within `maxRepairCycles`.
+- **AC-3.6 (rollback)** If violations persist after `maxRepairCycles`, working tree equals the pre-run state (`git status` clean, files byte-identical), exit non-zero, transcript path printed.
+- **AC-3.7 (surgical edits)** For every run above: the `.kicad_sch` diff touches only the s-expressions relevant to the change — file not regenerated (assert: < 5% of lines changed for AC-3.1).
+- **AC-3.8 (dirty tree)** With uncommitted changes and no `--allow-dirty`: refuses to start.
+- **AC-3.9 (dry run)** `--dry-run` prints the proposed diff and writes nothing.
+- **AC-3.10 (provider parity)** AC-3.1 passes with both `--model gpt-5` and `--model claude`.
+
+### AC-4 · Safety
+
+- **AC-4.1** No file in the repo, transcript, or any commit ever contains a string matching `sk-[A-Za-z0-9_-]{20,}` (grep the whole tree + `.copperhead/runs/` after all tests).
+- **AC-4.2** A tool call with a path outside the repo root (e.g. `../../etc/hosts`) is rejected.
+- **AC-4.3** `.gitignore` includes `.env` and `.copperhead/runs/` in the very first commit of the repo.
+
+### AC-7 · `copperhead sync` — full-state consistency
+
+- **AC-7.1 (resolve doc drift)** With BOM.md edited to disagree with the schematic, `sync` updates the doc to match the as-built schematic, appends a DECISIONS.md entry and a CHANGELOG.md entry, commits once, and exits 0; a `check` run immediately after is clean.
+- **AC-7.2 (repair dual-write)** With a constraint stated in a doc but missing from `constraints.json`, `sync` adds the registry entry with the correct `source` and `affects`, and vice versa (registry entry with no doc mention gets the doc line).
+- **AC-7.3 (never resolve a violation silently)** With an inconsistency that reflects a requirement violation (e.g. a part whose leakage breaks the sleep-current budget), `sync` does **not** rewrite either side to agree; it flags the violation with both sides and the governing spec/budget, and exits non-zero.
+- **AC-7.4 (dry run)** `sync --dry-run` prints every detected inconsistency (doc, claim, actual, proposed resolution) and writes nothing (`git status` unchanged).
+- **AC-7.5 (clean and idempotent)** On a consistent repo, `sync` exits 0 with "no inconsistencies", makes no edits and no commit; running `sync` twice in a row makes the second run a no-op.
+
+### AC-5 · Viewer (Phase 2 — only if built)
+
+- **AC-5.1** `copperhead watch` serves on localhost; page shows current schematic SVG within 2 s of load.
+- **AC-5.2** During a `do` run, the SVG re-renders without manual refresh after each file mutation; ERC/DRC status chip updates red→green.
+- **AC-5.3** Before/after toggle flips between pre-run and current render.
+- **AC-5.4** Agent plan/edit/verify turns stream into the left pane as they happen.
+
+### AC-6 · Submission readiness (hard gate, 5:30 PM)
+
+- **AC-6.1** Repo is public; README quickstart works on a clean machine (fresh clone, `npm i -g .` or `npx`, kicad-cli present) — actually tested, not assumed.
+- **AC-6.2** One full recorded run (screen capture) exists locally — the demo fallback.
+- **AC-6.3** 1-minute video exported and uploaded.
+- **AC-6.4** At least AC-3.1, AC-3.2, and AC-3.4 pass live on the demo machine — these three are the pitch.
+
+**Priority if time runs out:** AC-3.4 > AC-3.2 > AC-3.1 > AC-2.1 > AC-1.2 > everything else. The budget-refusal demo (AC-3.4) is the single strongest proof that this is reasoning, not autocomplete.
+
+## 10. Non-goals (hackathon day)
+
+- No autorouting, no placement optimization
+- No full s-expression round-trip library (parse for *reading* lists/nets only; *edits* are anchored text replaces)
+- No auth, no hosting, no billing
+- No Altium/Eagle formats
+- No Windows support guarantees (macOS/Linux only today)

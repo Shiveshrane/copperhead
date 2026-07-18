@@ -1,0 +1,481 @@
+import path from 'node:path';
+import { writeFile, mkdir, appendFile } from 'node:fs/promises';
+import type { ToolSchema } from './types.js';
+import { toolReadFile, toolWriteFile, toolEditFile, toolSearch } from './filetools.js';
+import { resolveInRepo, isKicadFile } from '../util/paths.js';
+import { runErc, runDrc, exportSvg, exportFab } from '../kicad/cli.js';
+import { formatViolations, type CheckReport } from '../kicad/report.js';
+import { listSymbols, listNets } from '../kicad/sexp.js';
+import { checkDrift } from '../memory/drift.js';
+import { saveConstraint } from '../memory/constraints.js';
+import { openspecValidate } from '../openspec/cli.js';
+import { existsSync } from 'node:fs';
+import type { CopperheadConfig } from '../config.js';
+import { ObligationsLedger } from './ledger.js';
+import type { Transcript } from './transcript.js';
+
+export interface FinishRequest {
+  outcome: 'done' | 'refuse';
+  summary: string;
+}
+
+/** Mutable state one run threads through every tool call. */
+export interface RunContext {
+  repoRoot: string;
+  config: CopperheadConfig;
+  transcript: Transcript;
+  ledger: ObligationsLedger;
+  runId: string;
+  interactive: boolean;
+  confirm: (question: string) => Promise<boolean>;
+  editsUnlocked: boolean;
+  changeId: string | null;
+  proposalValidated: boolean;
+  filesTouched: Set<string>;
+  decisions: string[];
+  lastErc: CheckReport | null;
+  lastDrc: CheckReport | null;
+  repairCycles: number;
+  finishRequest: FinishRequest | null;
+}
+
+export interface ToolDef {
+  schema: ToolSchema;
+  /** Edit-tier tools are absent from the tool list until the proposal validates. */
+  requiresUnlock: boolean;
+  handler: (ctx: RunContext, args: Record<string, unknown>) => Promise<string>;
+}
+
+const str = (args: Record<string, unknown>, key: string): string => {
+  const v = args[key];
+  if (typeof v !== 'string' || v === '') throw new Error(`missing required string arg "${key}"`);
+  return v;
+};
+
+function markTouched(ctx: RunContext, rel: string): void {
+  ctx.filesTouched.add(rel);
+  if (isKicadFile(rel)) {
+    ctx.ledger.onKicadEdit(rel);
+    if (rel.endsWith('.kicad_sch')) ctx.lastErc = null;
+    if (rel.endsWith('.kicad_pcb')) ctx.lastDrc = null;
+  } else if (rel.endsWith('.md')) {
+    ctx.ledger.onDocEdit(rel);
+  }
+}
+
+export const TOOLS: ToolDef[] = [
+  {
+    schema: {
+      name: 'read_file',
+      description: 'Read a repo-relative file, optionally a line range. Returns text (line-numbered when ranged).',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          start_line: { type: 'number' },
+          end_line: { type: 'number' },
+        },
+        required: ['path'],
+      },
+    },
+    requiresUnlock: false,
+    handler: (ctx, args) =>
+      toolReadFile(
+        ctx.repoRoot,
+        str(args, 'path'),
+        args.start_line as number | undefined,
+        args.end_line as number | undefined,
+      ),
+  },
+  {
+    schema: {
+      name: 'search',
+      description: 'Regex search over the repo (ripgrep-style). Optional glob filter, e.g. "**/*.kicad_sch".',
+      parameters: {
+        type: 'object',
+        properties: { pattern: { type: 'string' }, glob: { type: 'string' } },
+        required: ['pattern'],
+      },
+    },
+    requiresUnlock: false,
+    handler: async (ctx, args) => {
+      const matches = await toolSearch(ctx.repoRoot, str(args, 'pattern'), args.glob as string | undefined);
+      if (!matches.length) return 'no matches';
+      return matches.map((m) => `${m.file}:${m.line}: ${m.text}`).join('\n');
+    },
+  },
+  {
+    schema: {
+      name: 'list_symbols',
+      description: 'List schematic symbols: ref, value, footprint, sheet.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+    requiresUnlock: false,
+    handler: async (ctx) => {
+      if (!ctx.config.schematic) return 'no schematic configured';
+      const syms = await listSymbols(path.join(ctx.repoRoot, ctx.config.schematic));
+      return JSON.stringify(syms.map(({ ref, value, footprint, sheet }) => ({ ref, value, footprint, sheet })), null, 2);
+    },
+  },
+  {
+    schema: {
+      name: 'list_nets',
+      description: 'List net names found in the schematic.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+    requiresUnlock: false,
+    handler: async (ctx) => {
+      if (!ctx.config.schematic) return 'no schematic configured';
+      return JSON.stringify(await listNets(path.join(ctx.repoRoot, ctx.config.schematic)));
+    },
+  },
+  {
+    schema: {
+      name: 'propose_change',
+      description:
+        'Write the OpenSpec change proposal for this run (the plan step). Must be called and validated before edit tools unlock.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'kebab-case change id' },
+          why: { type: 'string' },
+          what_changes: { type: 'string', description: 'markdown bullet list of changes' },
+          tasks: { type: 'string', description: 'markdown checklist of implementation steps' },
+        },
+        required: ['id', 'why', 'what_changes', 'tasks'],
+      },
+    },
+    requiresUnlock: false,
+    handler: async (ctx, args) => {
+      const id = str(args, 'id');
+      const dir = resolveInRepo(ctx.repoRoot, path.join('openspec', 'changes', id));
+      await mkdir(dir, { recursive: true });
+      const auto = ctx.interactive ? '' : '\n> Marker: AUTO (autonomous mode; auto-approved, reviewable after the fact)\n';
+      await writeFile(
+        path.join(dir, 'proposal.md'),
+        `# Proposal: ${id}\n${auto}\n## Why\n\n${str(args, 'why')}\n\n## What Changes\n\n${str(args, 'what_changes')}\n`,
+        'utf8',
+      );
+      await writeFile(path.join(dir, 'tasks.md'), `# Tasks\n\n${str(args, 'tasks')}\n`, 'utf8');
+      ctx.changeId = id;
+      return `proposal written to openspec/changes/${id}/ — now call validate_change`;
+    },
+  },
+  {
+    schema: {
+      name: 'validate_change',
+      description: 'Validate the current change proposal; on success the edit tools unlock.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+    requiresUnlock: false,
+    handler: async (ctx) => {
+      if (!ctx.changeId) return 'no proposal yet: call propose_change first';
+      let ok: boolean;
+      let detail: string;
+      if (existsSync(path.join(ctx.repoRoot, 'openspec', 'config.yaml'))) {
+        const res = await openspecValidate(ctx.repoRoot, ctx.changeId);
+        ok = res.ok;
+        detail = res.output;
+      } else {
+        // No OpenSpec workspace in the target repo: structural validation of the
+        // proposal files themselves (the invariant is the gate, not the CLI).
+        const dir = path.join(ctx.repoRoot, 'openspec', 'changes', ctx.changeId);
+        ok = existsSync(path.join(dir, 'proposal.md')) && existsSync(path.join(dir, 'tasks.md'));
+        detail = ok ? 'structural validation passed (no openspec workspace)' : 'proposal files missing';
+      }
+      if (!ok) return `validation FAILED:\n${detail}`;
+      ctx.proposalValidated = true;
+      if (ctx.interactive) {
+        const approved = await ctx.confirm(`Proposal ${ctx.changeId} validated. Unlock edit tools and proceed?`);
+        if (!approved) return 'proposal validated but human declined; edits remain locked';
+      }
+      ctx.editsUnlocked = true;
+      await ctx.transcript.event('edit-tools-unlocked', { changeId: ctx.changeId });
+      return `validation passed; edit tools are now unlocked`;
+    },
+  },
+  {
+    schema: {
+      name: 'edit_file',
+      description:
+        'Exact-match anchored replace in an existing file. The anchor must be unique; widen it with surrounding lines if not. For renames, pass replace_all: true to replace every occurrence in one call.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          old_string: { type: 'string' },
+          new_string: { type: 'string' },
+          replace_all: { type: 'boolean' },
+        },
+        required: ['path', 'old_string', 'new_string'],
+      },
+    },
+    requiresUnlock: true,
+    handler: async (ctx, args) => {
+      const rel = str(args, 'path');
+      const res = await toolEditFile(
+        ctx.repoRoot,
+        rel,
+        str(args, 'old_string'),
+        args.new_string as string,
+        args.replace_all === true,
+      );
+      markTouched(ctx, rel);
+      return res;
+    },
+  },
+  {
+    schema: {
+      name: 'write_file',
+      description: 'Create a new file (docs, outputs). Refuses to overwrite anything or to create KiCad files.',
+      parameters: {
+        type: 'object',
+        properties: { path: { type: 'string' }, content: { type: 'string' } },
+        required: ['path', 'content'],
+      },
+    },
+    requiresUnlock: true,
+    handler: async (ctx, args) => {
+      const rel = str(args, 'path');
+      const res = await toolWriteFile(ctx.repoRoot, rel, args.content as string);
+      markTouched(ctx, rel);
+      return res;
+    },
+  },
+  {
+    schema: {
+      name: 'run_erc',
+      description: 'Run kicad-cli ERC on the schematic. Clears the ERC obligation when clean.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+    requiresUnlock: false,
+    handler: async (ctx) => {
+      if (!ctx.config.schematic) return 'no schematic configured';
+      const report = await runErc(path.join(ctx.repoRoot, ctx.config.schematic));
+      ctx.lastErc = report;
+      if (report.ok) ctx.ledger.clear('erc');
+      else ctx.repairCycles++;
+      return formatViolations(report);
+    },
+  },
+  {
+    schema: {
+      name: 'run_drc',
+      description: 'Run kicad-cli DRC on the board. Clears the DRC obligation when clean.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+    requiresUnlock: false,
+    handler: async (ctx) => {
+      if (!ctx.config.board) return 'no board configured';
+      const report = await runDrc(path.join(ctx.repoRoot, ctx.config.board));
+      ctx.lastDrc = report;
+      if (report.ok) ctx.ledger.clear('drc');
+      else ctx.repairCycles++;
+      return formatViolations(report);
+    },
+  },
+  {
+    schema: {
+      name: 'export_svg',
+      description: 'Export an SVG render of the schematic or board into .copperhead/renders/.',
+      parameters: {
+        type: 'object',
+        properties: { kind: { type: 'string', enum: ['sch', 'pcb'] } },
+        required: ['kind'],
+      },
+    },
+    requiresUnlock: false,
+    handler: async (ctx, args) => {
+      const kind = str(args, 'kind') as 'sch' | 'pcb';
+      const file = kind === 'sch' ? ctx.config.schematic : ctx.config.board;
+      if (!file) return `no ${kind} configured`;
+      const outDir = path.join(ctx.repoRoot, '.copperhead', 'renders');
+      await mkdir(outDir, { recursive: true });
+      return exportSvg(kind, path.join(ctx.repoRoot, file), outDir);
+    },
+  },
+  {
+    schema: {
+      name: 'export_outputs',
+      description:
+        'Export the fabrication package into outputs/: gerbers+drill, DXF outline, STEP, SVG renders. Reports per-artifact success/failure.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+    requiresUnlock: true,
+    handler: async (ctx) => {
+      if (!ctx.config.board) return 'no board configured';
+      const outDir = path.join(ctx.repoRoot, 'outputs');
+      await mkdir(outDir, { recursive: true });
+      const res = await exportFab(
+        path.join(ctx.repoRoot, ctx.config.board),
+        ctx.config.schematic ? path.join(ctx.repoRoot, ctx.config.schematic) : null,
+        outDir,
+      );
+      ctx.filesTouched.add('outputs/');
+      const lines = [`produced: ${res.produced.join(', ') || '(none)'}`];
+      for (const f of res.failed) lines.push(`FAILED ${f.artifact}: ${f.reason}`);
+      return lines.join('\n');
+    },
+  },
+  {
+    schema: {
+      name: 'check_drift',
+      description: 'Compare BOM.md/PINOUT.md tables against the parsed schematic. Clears the drift obligation when clean.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+    requiresUnlock: false,
+    handler: async (ctx) => {
+      if (!ctx.config.schematic) return 'no schematic configured';
+      const mismatches = await checkDrift(ctx.repoRoot, ctx.config.docs, ctx.config.schematic);
+      if (!mismatches.length) {
+        ctx.ledger.clear('drift');
+        return 'drift: clean';
+      }
+      return mismatches.map((m) => `${m.doc}: claims "${m.claim}" but actual is "${m.actual}"`).join('\n');
+    },
+  },
+  {
+    schema: {
+      name: 'record_constraint',
+      description:
+        'Record a constraint in .copperhead/constraints.json (dual write: put the same fact in the relevant doc in this same turn). Opens revisit obligations for every item in affects.',
+      parameters: {
+        type: 'object',
+        properties: {
+          key: { type: 'string', description: 'e.g. power.sleep_current_uA' },
+          min: { type: 'number' },
+          max: { type: 'number' },
+          forbidden: { type: 'array', items: { type: 'string' } },
+          value: { type: 'string' },
+          source: { type: 'string', description: 'doc/spec location that states this' },
+          affects: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['key', 'source', 'affects'],
+      },
+    },
+    requiresUnlock: true,
+    handler: async (ctx, args) => {
+      const key = str(args, 'key');
+      const affects = (args.affects as string[]) ?? [];
+      await saveConstraint(ctx.repoRoot, key, {
+        ...(args.min !== undefined ? { min: args.min as number } : {}),
+        ...(args.max !== undefined ? { max: args.max as number } : {}),
+        ...(args.forbidden !== undefined ? { forbidden: args.forbidden as string[] } : {}),
+        ...(args.value !== undefined ? { value: args.value as string } : {}),
+        source: str(args, 'source'),
+        affects,
+      });
+      ctx.ledger.onConstraintChange(key, affects);
+      ctx.ledger.clear('constraint-dual-write', key);
+      return `constraint ${key} recorded; revisit obligations opened for: ${affects.join(', ') || '(none)'}`;
+    },
+  },
+  {
+    schema: {
+      name: 'resolve_affected',
+      description:
+        'Explicitly resolve an affects-revisit obligation: state whether the affected item changed or why no change is needed.',
+      parameters: {
+        type: 'object',
+        properties: {
+          constraint_key: { type: 'string' },
+          item: { type: 'string' },
+          resolution: { type: 'string', description: '"changed: ..." or "no change needed: <reason>"' },
+        },
+        required: ['constraint_key', 'item', 'resolution'],
+      },
+    },
+    requiresUnlock: true,
+    handler: async (ctx, args) => {
+      const detail = `${str(args, 'constraint_key')} affects ${str(args, 'item')}`;
+      ctx.ledger.clear('affects-revisit', detail);
+      ctx.decisions.push(`[affects] ${detail}: ${str(args, 'resolution')}`);
+      return `resolved: ${detail}`;
+    },
+  },
+  {
+    schema: {
+      name: 'record_decision',
+      description:
+        'Append a non-trivial decision to docs/DECISIONS.md: what was decided, the one-line why, and what it affects.',
+      parameters: {
+        type: 'object',
+        properties: {
+          decision: { type: 'string' },
+          rationale: { type: 'string' },
+          affects: { type: 'string', description: 'refdes/nets/docs affected' },
+        },
+        required: ['decision', 'rationale'],
+      },
+    },
+    requiresUnlock: true,
+    handler: async (ctx, args) => {
+      const decision = str(args, 'decision');
+      const rationale = str(args, 'rationale');
+      const affects = (args.affects as string | undefined) ?? '';
+      const date = new Date().toISOString().slice(0, 10);
+      const entry = `- ${date} [run ${ctx.runId}] ${decision} | why: ${rationale}${affects ? ` | affects: ${affects}` : ''}`;
+      const p = path.join(ctx.repoRoot, ctx.config.docs, 'DECISIONS.md');
+      await appendFile(p, entry + '\n', 'utf8');
+      ctx.decisions.push(`${decision} | why: ${rationale}`);
+      ctx.filesTouched.add(path.join(ctx.config.docs, 'DECISIONS.md'));
+      return 'decision recorded';
+    },
+  },
+  {
+    schema: {
+      name: 'finish',
+      description:
+        'End the run. outcome "done" requires all verification gates and sync obligations to be satisfied; outcome "refuse" ends without edits, citing the violated budget/constraint in summary.',
+      parameters: {
+        type: 'object',
+        properties: {
+          outcome: { type: 'string', enum: ['done', 'refuse'] },
+          summary: { type: 'string' },
+        },
+        required: ['outcome', 'summary'],
+      },
+    },
+    requiresUnlock: false,
+    handler: async (ctx, args) => {
+      const outcome = str(args, 'outcome') as 'done' | 'refuse';
+      const summary = str(args, 'summary');
+      if (outcome === 'refuse') {
+        ctx.finishRequest = { outcome, summary };
+        return 'refusal recorded; run will end';
+      }
+      const problems: string[] = [];
+      const touchedKicad = [...ctx.filesTouched].some((f) => isKicadFile(f));
+      if (touchedKicad) {
+        if (!ctx.lastErc?.ok) problems.push('ERC has not passed since the last schematic edit (run run_erc)');
+        const touchedPcb = [...ctx.filesTouched].some((f) => f.endsWith('.kicad_pcb'));
+        if (touchedPcb && !ctx.lastDrc?.ok) problems.push('DRC has not passed since the last board edit (run run_drc)');
+      }
+      // the changelog obligation is cleared by the commit path itself
+      const blocking = ctx.ledger.openObligations.filter((o) => o.kind !== 'changelog');
+      if (blocking.length) {
+        problems.push('open sync obligations:\n' + blocking.map((o) => `  - [${o.kind}] ${o.detail}`).join('\n'));
+      }
+      if (problems.length) {
+        return `cannot finish yet:\n${problems.map((p) => `- ${p}`).join('\n')}`;
+      }
+      ctx.finishRequest = { outcome, summary };
+      return 'all gates satisfied; run will commit';
+    },
+  },
+];
+
+/** Compose the tool list for the current state (design D2: the lock is structural). */
+export function availableTools(ctx: RunContext): ToolDef[] {
+  return TOOLS.filter((t) => !t.requiresUnlock || ctx.editsUnlocked);
+}
+
+export async function dispatchTool(ctx: RunContext, name: string, args: Record<string, unknown>): Promise<string> {
+  const tool = availableTools(ctx).find((t) => t.schema.name === name);
+  if (!tool) return `tool "${name}" is not available${ctx.editsUnlocked ? '' : ' (edit tools unlock after the proposal validates)'}`;
+  try {
+    return await tool.handler(ctx, args);
+  } catch (err) {
+    return `error: ${(err as Error).message}`;
+  }
+}

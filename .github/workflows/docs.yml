@@ -1,0 +1,58 @@
+name: Deploy docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/docs.yml'
+      - 'package.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let one deploy finish rather than cancelling it mid-publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # lastUpdated timestamps come from git history
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run docs:build
+
+      # Pages serves the artifact at the domain root, and the site is published
+      # under /docs, so the build output has to sit inside a docs/ folder.
+      # Nothing is placed at the root: that is copperhead.chouhan.ai, elsewhere.
+      - name: Assemble Pages artifact
+        run: |
+          mkdir -p _site/docs
+          cp -r docs/.vitepress/dist/. _site/docs/
+          echo 'copperhead.animeshchouhan.ai' > _site/CNAME
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

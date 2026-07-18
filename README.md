@@ -1,2 +1,87 @@
 # copperhead
-Cursor for circuit boards
+
+**Cursor for circuit boards.** An AI agent that designs, documents, and validates real PCBs from a prompt, working directly on existing KiCad repositories.
+
+> **Status: early (v0.1).** Phase 1 is implemented and the CLI runs. The [technical specification](openspec/specs/SPEC.md) is the source of truth; expect the surface to move before 1.0.
+
+## What it is
+
+An AI product-development agent for hardware: from a product brief to manufacturable files, firmware, and a build plan.
+
+- **`copperhead create`**: full pipeline from a natural-language brief: spec, architecture, part selection, schematic, first-draft layout, then gerbers, firmware scaffold, and dev plan.
+- **`copperhead do "<change>"`**: operates on an existing KiCad repo the way a coding agent operates on a codebase.
+
+It reads and edits real `.kicad_sch` / `.kicad_pcb` files (s-expression text), maintains markdown design docs as memory, propagates every change across all artifacts that reference it, and verifies its own work by running `kicad-cli` ERC/DRC until the checks pass.
+
+## How it works
+
+It's a loop, and it looks a lot like pair-programming, except the codebase is a circuit board.
+
+1. **Start from the docs.** Every decision lives in the design docs, so the agent reads those first and knows the whole design, not just the part in front of it.
+2. **Talk through the change.** Describe what you want ("add an external key jack", "cut the sleep current"). The agent proposes the parts and circuit; you push back until the reasoning holds up.
+3. **Edit the real files.** The agent writes changes straight into the KiCad schematic and the design docs, using the same part names and net names everywhere so nothing drifts.
+4. **Propagate.** Change one value, like a charge current or a pin, and it carries across every doc and schematic that references it. The boring, easy-to-get-wrong step is the one the agent is best at.
+5. **Check the work.** The agent runs ERC/DRC, reads the errors back, and fixes them. Nothing is "done" until the tools agree.
+6. **Write down why.** Every real decision gets a one-line reason next to it, so the next change doesn't quietly undo it.
+
+Two invariants make this trustworthy:
+
+1. **Nothing starts without a spec.** The agent cannot touch a KiCad file until a validated change proposal exists; the edit tools are structurally unavailable until it does. Every edit is traceable to a documented intent.
+2. **Nothing is "done" until the tools agree.** Every file mutation is followed by an ERC/DRC run before the agent reports success.
+
+Spec-gated in, verification-gated out: the design can't drift from its requirements, because drift is a build failure.
+
+## CLI
+
+```text
+copperhead init [--path hardware/]   # scaffold docs/ from an existing schematic; idempotent
+copperhead do "<change request>"     # the core loop: propose, edit, verify, propagate, commit
+copperhead check                     # ERC + DRC + doc-drift + spec validation; no LLM calls (alias: verify)
+copperhead sync [--dry-run]          # verify the whole design state, resolve drift
+copperhead create --brief brief.md   # brief → full output package
+```
+
+Global flags: `--repo <path>` (default: cwd) and `--json` for machine-readable output. `do` and `create` take `--model` and `--interactive`; `do` also takes `--dry-run`, `--max-turns`, and `--allow-dirty`.
+
+Nothing is a black box: decisions land in an append-only `docs/DECISIONS.md`, every run writes a human-readable summary next to its transcript, and a per-run `docs/CHANGELOG.md` narrates the design history.
+
+## What it is not
+
+- **Not an autorouter.** Routing stays human or delegated; copperhead produces the DRC-clean draft that layout tools optimize from.
+- **Not a new editor.** No walled garden; your KiCad install remains the editor.
+- **Not the engineer of record.** A human signs off; the agent never claims a design is fab-ready beyond "ERC/DRC clean".
+
+## Install
+
+```bash
+npm install -g copperhead   # or: npx copperhead check
+```
+
+### Requirements
+
+- Node.js ≥ 20
+- [KiCad](https://www.kicad.org/) ≥ 8 with `kicad-cli` on PATH
+- An OpenAI or Anthropic API key (env var only), except for `check`, which never calls an LLM
+
+## Maturity
+
+Honest read of where v0.1 stands, so you can calibrate before pointing this at a board you care about:
+
+- **Solid.** `init` and `check`/`verify` are deterministic, LLM-free, and covered by the offline test suite against a real KiCad fixture: scaffolding, ERC/DRC, the s-expression reader, drift detection, and fab export all run green in CI.
+- **Implemented, not yet proven.** The agent loop (`do`, `sync --resolve`, `create`) is complete and structurally gated, but its acceptance tests need a live model and have not been observed passing end to end. Expect rough edges.
+- **Always.** Every mutation runs inside a git snapshot and rolls back if verification fails, so the worst case is a no-op commit, not a mangled schematic. Work on a branch anyway.
+
+## Open source
+
+The entire tool (agent core, prompts, tools) is public under Apache-2.0, built on an open stack (KiCad, kicad-cli, [OpenSpec](https://github.com/Fission-AI/OpenSpec)). Everything it produces is plain markdown and JSON in your own repo: no proprietary formats, no lock-in. This is a Chouhan Industries project, and the same commitment that puts every hardware schematic in public applies to the tool that designs them.
+
+## Project layout
+
+- [`src/`](src/): CLI ([`cli.ts`](src/cli.ts), [`commands/`](src/commands/)), the provider-agnostic agent loop ([`agent/`](src/agent/)), the `kicad-cli` wrapper and s-expression reader ([`kicad/`](src/kicad/)), and doc/constraint memory ([`memory/`](src/memory/))
+- [`test/`](test/): offline suite plus [`fixtures/`](test/fixtures/), a tiny known-good KiCad project
+- [`openspec/specs/SPEC.md`](openspec/specs/SPEC.md): the full technical specification, including binary acceptance criteria
+- [`openspec/changes/build-copperhead-phase-1/`](openspec/changes/build-copperhead-phase-1/): the implementation plan with proposal, design decisions, capability specs, and task checklist
+
+## License
+
+[Apache-2.0](LICENSE)

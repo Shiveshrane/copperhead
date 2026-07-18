@@ -1,0 +1,71 @@
+/**
+ * Sync-obligations ledger (design D13). Deterministic post-tool-call hooks
+ * record obligations; the commit gate refuses while any is open. This is what
+ * turns "keep everything in sync" into a mechanical gate instead of a prompt.
+ */
+export type ObligationKind =
+  | 'erc'
+  | 'drc'
+  | 'drift'
+  | 'changelog'
+  | 'decision-log'
+  | 'constraint-dual-write'
+  | 'affects-revisit';
+
+export interface Obligation {
+  kind: ObligationKind;
+  detail: string;
+  openedBy: string;
+}
+
+export class ObligationsLedger {
+  private open: Obligation[] = [];
+
+  add(kind: ObligationKind, detail: string, openedBy: string): void {
+    if (!this.open.some((o) => o.kind === kind && o.detail === detail)) {
+      this.open.push({ kind, detail, openedBy });
+    }
+  }
+
+  clear(kind: ObligationKind, detail?: string): void {
+    this.open = this.open.filter(
+      (o) => !(o.kind === kind && (detail === undefined || o.detail === detail)),
+    );
+  }
+
+  /** A KiCad edit re-opens verification obligations even if previously cleared. */
+  onKicadEdit(file: string): void {
+    this.add('erc', 'ERC must pass after schematic edits', file);
+    if (file.endsWith('.kicad_pcb')) this.add('drc', 'DRC must pass after board edits', file);
+    this.add('drift', 'check_drift must run clean after KiCad edits', file);
+    this.add('changelog', 'CHANGELOG.md entry for this run', file);
+  }
+
+  onDocEdit(file: string): void {
+    this.add('drift', 'check_drift must run clean after doc edits', file);
+  }
+
+  onConstraintChange(constraintKey: string, affects: string[]): void {
+    this.add('constraint-dual-write', constraintKey, constraintKey);
+    for (const item of affects) {
+      this.add('affects-revisit', `${constraintKey} affects ${item}`, constraintKey);
+    }
+  }
+
+  onDecision(summary: string): void {
+    this.add('decision-log', summary, 'decision');
+  }
+
+  get openObligations(): readonly Obligation[] {
+    return this.open;
+  }
+
+  get isClear(): boolean {
+    return this.open.length === 0;
+  }
+
+  describe(): string {
+    if (this.isClear) return 'all sync obligations satisfied';
+    return this.open.map((o) => `- [${o.kind}] ${o.detail} (opened by ${o.openedBy})`).join('\n');
+  }
+}
