@@ -9,9 +9,9 @@ export default defineConfig({
   cleanUrls: true,
   lastUpdated: true,
 
-  // Served at the root of its own subdomain, docs.copperhead.chouhan.ai.
-  // The apex, copperhead.chouhan.ai, is a separate Cloudflare Worker (the
-  // copperhead-site repo), so Pages cannot own a path under it.
+  // Served at the root of its own subdomain, docs.copperhead.sh. The apex,
+  // copperhead.sh, is a separate Cloudflare Worker (the copperhead-site repo),
+  // so Pages cannot own a path under it.
   base: '/',
 
   head: [['meta', { name: 'theme-color', content: '#b87333' }]],

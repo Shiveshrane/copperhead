@@ -34,13 +34,13 @@ jobs:
       - run: npm run docs:build
 
       # The docs own this subdomain outright, so the build output sits at the
-      # artifact root. The apex, copperhead.chouhan.ai, is served separately by
-      # the copperhead-site Cloudflare Worker and is not touched here.
+      # artifact root. The apex, copperhead.sh, is served separately by the
+      # copperhead-site Cloudflare Worker and is not touched here.
       - name: Assemble Pages artifact
         run: |
           mkdir -p _site
           cp -r docs/.vitepress/dist/. _site/
-          echo 'docs.copperhead.chouhan.ai' > _site/CNAME
+          echo 'docs.copperhead.sh' > _site/CNAME
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
