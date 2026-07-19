@@ -325,7 +325,16 @@ export const TOOLS: ToolDef[] = [
     },
     requiresUnlock: false,
     handler: async (ctx) => {
-      if (!ctx.config.schematic) return 'no schematic configured';
+      // No schematic yet means there is nothing for the docs to drift against,
+      // so the obligation is vacuously satisfied and must be cleared. Returning
+      // without clearing deadlocks every docs-only stage of the create pipeline
+      // (spec-seed, architecture, part-selection all run before the schematic
+      // exists): a doc edit opens the drift obligation, this is the only tool
+      // that clears it, and finish refuses while any obligation is open.
+      if (!ctx.config.schematic) {
+        ctx.ledger.clear('drift');
+        return 'no schematic configured; drift vacuously clean';
+      }
       const mismatches = await checkDrift(ctx.repoRoot, ctx.config.docs, ctx.config.schematic);
       if (!mismatches.length) {
         ctx.ledger.clear('drift');
@@ -388,7 +397,17 @@ export const TOOLS: ToolDef[] = [
     requiresUnlock: true,
     handler: async (ctx, args) => {
       const detail = `${str(args, 'constraint_key')} affects ${str(args, 'item')}`;
-      ctx.ledger.clear('affects-revisit', detail);
+      // An item that matches nothing must not read as success: the model would
+      // move on believing the obligation closed, and only find out at finish.
+      if (!ctx.ledger.clear('affects-revisit', detail)) {
+        const open = ctx.ledger.openOfKind('affects-revisit');
+        if (!open.length) return `error: no open affects-revisit obligation matches "${detail}"`;
+        return [
+          `error: no open affects-revisit obligation matches "${detail}".`,
+          'Resolve one item per call, matching these exactly:',
+          ...open.map((o) => `  - ${o.detail}`),
+        ].join('\n');
+      }
       ctx.decisions.push(`[affects] ${detail}: ${str(args, 'resolution')}`);
       return `resolved: ${detail}`;
     },

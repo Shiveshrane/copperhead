@@ -114,6 +114,27 @@ describe('spec gating: structural edit lock (invariant 1)', () => {
     }
   });
 
+  it('check_drift clears the drift obligation when no schematic exists yet', async () => {
+    // Regression: the create pipeline's first three stages are docs-only and run
+    // before a schematic exists. check_drift used to early-return without
+    // clearing, and since it is the only tool that clears drift, a doc edit
+    // opened an obligation that could never close and finish refused forever.
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      await runInit({ repoRoot: repo });
+      const ctx = await makeCtx(repo);
+      ctx.config = { ...ctx.config, schematic: null };
+      ctx.ledger.onDocEdit('docs/SPEC.md');
+      expect(ctx.ledger.openObligations.some((o) => o.kind === 'drift')).toBe(true);
+
+      const res = await dispatchTool(ctx, 'check_drift', {});
+      expect(res).toContain('vacuously clean');
+      expect(ctx.ledger.openObligations.some((o) => o.kind === 'drift')).toBe(false);
+    } finally {
+      await cleanup();
+    }
+  });
+
   it('record_constraint opens affects-revisit obligations; resolve_affected clears them', async () => {
     const { repo, cleanup } = await tempFixtureRepo();
     try {
@@ -133,6 +154,35 @@ describe('spec gating: structural edit lock (invariant 1)', () => {
         resolution: 'no change needed: R1 is on EN, not a leakage path in sleep',
       });
       expect(ctx.ledger.openObligations.some((o) => o.kind === 'affects-revisit')).toBe(false);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('resolve_affected reports a miss instead of silently succeeding', async () => {
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      await runInit({ repoRoot: repo });
+      const ctx = await makeCtx(repo);
+      ctx.editsUnlocked = true;
+      await dispatchTool(ctx, 'record_constraint', {
+        key: 'power.cc_rd_ohms',
+        max: 5100,
+        source: 'docs/SPEC.md#budgets',
+        affects: ['CC1', 'CC2'],
+      });
+      // Both items in one call matches neither obligation.
+      const res = await dispatchTool(ctx, 'resolve_affected', {
+        constraint_key: 'power.cc_rd_ohms',
+        item: 'CC1/CC2',
+        resolution: 'changed: 5.1k',
+      });
+      expect(res).toMatch(/^error:/);
+      expect(res).toContain('power.cc_rd_ohms affects CC1');
+      expect(res).toContain('power.cc_rd_ohms affects CC2');
+      // The obligations stay open, and no decision is logged for a failed resolve.
+      expect(ctx.ledger.openOfKind('affects-revisit')).toHaveLength(2);
+      expect(ctx.decisions.some((d) => d.includes('CC1/CC2'))).toBe(false);
     } finally {
       await cleanup();
     }

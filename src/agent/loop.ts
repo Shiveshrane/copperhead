@@ -14,6 +14,7 @@ import { openspecArchive } from '../openspec/cli.js';
 import { existsSync } from 'node:fs';
 import { OpenAIProvider } from './providers/openai.js';
 import { AnthropicProvider } from './providers/anthropic.js';
+import { openSynapMemory, type RunRecord, type SynapMemory } from '../memory/synap.js';
 
 export interface RunOptions {
   repoRoot: string;
@@ -84,7 +85,21 @@ async function appendChangelog(
   await writeFile(p, lines.join('\n'), 'utf8');
 }
 
+/**
+ * Owns the Synap session for one run. The bridge is a subprocess, so the
+ * shutdown in `finally` is what lets the CLI exit; without it the process
+ * hangs after a successful run.
+ */
 export async function runAgentLoop(opts: RunOptions): Promise<RunResult> {
+  const memory = await openSynapMemory({ repoRoot: opts.repoRoot, log: opts.log });
+  try {
+    return await runWithMemory(opts, memory);
+  } finally {
+    await memory?.close();
+  }
+}
+
+async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Promise<RunResult> {
   const log = opts.log ?? ((l: string) => console.log(l));
   const repoRoot = opts.repoRoot;
   const config = await loadConfig(repoRoot);
@@ -121,12 +136,37 @@ export async function runAgentLoop(opts: RunOptions): Promise<RunResult> {
 
   let provider = makeProvider(opts.model);
   const constraints = await loadConstraints(repoRoot);
-  const system = await buildSystemPrompt(repoRoot, config, constraints);
+  const basePrompt = await buildSystemPrompt(repoRoot, config, constraints);
+  // Cross-run memory is appended after the repo's own docs and constraints so
+  // that the in-repo sources of truth are what the model reads first.
+  const recalled = memory ? await memory.recall(opts.request) : null;
+  if (recalled) {
+    await transcript.event('synap-recall', { chars: recalled.length });
+    log('recalled prior context from Synap memory');
+  }
+  const system = recalled ? `${basePrompt}\n\n${recalled}` : basePrompt;
   const messages: Msg[] = [
     { role: 'system', content: system },
     { role: 'user', content: opts.stagePrompt ? `${opts.stagePrompt}\n\nRequest: ${opts.request}` : opts.request },
   ];
   await transcript.event('run-start', { request: opts.request, model: opts.model, provider: provider.name });
+
+  /**
+   * A memory write that fails is reported rather than swallowed, but it does
+   * not change the run's outcome: discarding a verified commit because a
+   * third-party write failed would be the worse trade.
+   */
+  const remember = async (run: RunRecord): Promise<void> => {
+    if (!memory) return;
+    try {
+      await memory.record(run);
+      await transcript.event('synap-record', { outcome: run.outcome });
+    } catch (err) {
+      const message = (err as Error).message;
+      log(`warning: Synap memory write failed (${message}); this run was not recorded`);
+      await transcript.event('synap-record-failed', { error: message });
+    }
+  };
 
   let tokensIn = 0;
   let tokensOut = 0;
@@ -242,6 +282,17 @@ export async function runAgentLoop(opts: RunOptions): Promise<RunResult> {
           openObligations: null,
           detail: `REFUSED: ${summary}`,
         });
+        // Refusals are the most valuable thing to remember: they encode a budget
+        // or constraint that this user's designs keep running into.
+        await remember({
+          request: opts.request,
+          outcome: 'refused',
+          summary,
+          changeId: ctx.changeId,
+          filesTouched: [],
+          decisions: ctx.decisions,
+          verification: 'n/a (refused before verification)',
+        });
         log(`refused: ${summary}`);
         return { outcome: 'refused', summary, transcriptDir: transcript.dir, filesTouched: [], commit: null };
       }
@@ -309,6 +360,15 @@ export async function runAgentLoop(opts: RunOptions): Promise<RunResult> {
         tokensOut,
         outcome: 'success',
         openObligations: null,
+      });
+      await remember({
+        request: opts.request,
+        outcome: 'success',
+        summary,
+        changeId: ctx.changeId,
+        filesTouched: files,
+        decisions: ctx.decisions,
+        verification,
       });
       log(`committed ${commit.slice(0, 10)} (${files.length} file(s))`);
       return { outcome: 'success', summary, transcriptDir: transcript.dir, filesTouched: files, commit };

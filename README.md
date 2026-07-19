@@ -57,6 +57,23 @@ Nothing is a black box: decisions land in an append-only `docs/DECISIONS.md`, ev
 npm install -g copperhead   # or: npx copperhead check
 ```
 
+## Simple demo
+
+From a checkout of this repo, run the smallest create-pipeline demo with the USB-C power breakout brief:
+
+```bash
+npm run demo:simple
+```
+
+The script creates or resumes a git repo at `demo-runs/usb-c-breakout/` and runs:
+
+```bash
+copperhead create --brief examples/simple/usb-c-breakout.md
+```
+
+Pass normal create flags after `--`, for example `npm run demo:simple -- --model claude`.
+If a stage fails, rerun the same command; the demo repo keeps a baseline commit and ignores run transcripts so retries start from the last committed design state.
+
 ### Requirements
 
 - Node.js ≥ 20

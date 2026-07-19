@@ -27,10 +27,18 @@ export class ObligationsLedger {
     }
   }
 
-  clear(kind: ObligationKind, detail?: string): void {
+  /** Returns true if at least one obligation was actually removed. */
+  clear(kind: ObligationKind, detail?: string): boolean {
+    const before = this.open.length;
     this.open = this.open.filter(
       (o) => !(o.kind === kind && (detail === undefined || o.detail === detail)),
     );
+    return this.open.length < before;
+  }
+
+  /** Open obligations of one kind, for building corrective tool errors. */
+  openOfKind(kind: ObligationKind): readonly Obligation[] {
+    return this.open.filter((o) => o.kind === kind);
   }
 
   /** A KiCad edit re-opens verification obligations even if previously cleared. */
