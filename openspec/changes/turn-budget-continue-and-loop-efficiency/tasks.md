@@ -39,3 +39,14 @@
 - [x] 6.5 Anthropic provider: request carries the three cache-control breakpoints; usage sums cached token fields (mock SDK)
 - [x] 6.6 Config/create: `stageMaxTurns` parsed and applied per stage; absent map means global default
 - [x] 6.7 Full suite green: `npm test`, `npm run build`
+
+## 7. Create-pipeline hardening (live-run follow-ups #19/#21/#23/#25 + re-review fixes)
+
+- [x] 7.1 `src/commands/create.ts`: content-aware `isComplete` for schematic (symbols + drift-clean) and layout-draft (board with a footprint + LAYOUT.md marker); post-run contract re-check halts the pipeline instead of advancing
+- [x] 7.2 `src/kicad/cli.ts`: `kicadLoadError` probe (sch netlist / pcb pos export) restricted via `isProbeableKicadFile` to `.kicad_sch`/`.kicad_pcb`; missing ERC/DRC reports raise kicad-cli's own output
+- [x] 7.3 `src/agent/tools.ts` `edit_file`: probe after schematic/board edits; revert newly unloadable files with the kicad-cli reason; keep edits to already-unloadable files (incremental repair); never probe `.kicad_pro`/`.kicad_sym`/`.kicad_mod`
+- [x] 7.4 `src/memory/drift.ts`: zero-symbol schematics produce no mismatches (bootstrap state); `emptySchematicWarning` helper for the check-side warning
+- [x] 7.5 `src/commands/check.ts`: log the empty-schematic warning and expose optional `drift.warning` (omitted when clean, preserving stable JSON keys)
+- [x] 7.6 `src/agent/transcript.ts`: re-create the run dir before event/summary writes (audit trail survives working-tree rollbacks)
+- [x] 7.7 `src/agent/loop.ts`: nudge counter resets on any tool call; only consecutive tool-less turns stall a run
+- [x] 7.8 Tests: `test/create-hardening.test.ts` (probe scoping, revert, already-corrupt keep, drift exemption + warning); `test/create-stage-turns.test.ts` reflects the post-run contract gate

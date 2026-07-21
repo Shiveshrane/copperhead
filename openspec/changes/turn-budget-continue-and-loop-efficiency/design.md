@@ -50,6 +50,22 @@ The schema gains an optional `resolutions: [{constraint_key, item, resolution}]`
 
 `.copperhead/config.json` gains optional `stageMaxTurns: Record<string, number>` keyed by pipeline stage name. `create` passes `stageMaxTurns[stage.name]` as the run's `maxTurns` when present; otherwise the global default applies. Stage names not in the map are unaffected; unknown keys are ignored. Rejected alternative: hardcoded per-stage defaults in `STAGES`, rejected because the right budget depends on the design's size, not just the stage kind.
 
+### D7: Content-aware stage completion with a post-run contract gate
+
+Live runs showed a stage can finish "done" with all gates green having only planned the work (one header edit, ERC "clean" on an empty sheet), after which every later stage runs against a design that is not there. Stage completion is therefore judged by repo state: the schematic stage requires at least one symbol plus drift-clean BOM/PINOUT; layout-draft requires a board containing a footprint plus the LAYOUT.md marker (which `init` scaffolds, so the marker alone proves nothing). `runCreate` re-checks the contract after each successful run and halts with a resume hint rather than advancing. Alternative considered: prompting harder; rejected because a contract that is not enforced is advisory.
+
+### D8: KiCad edits are probe-validated, scoped to what kicad-cli can probe
+
+Anchored text edits can corrupt an s-expression file invisibly; the corruption then surfaces as an opaque ERC failure turns later. After each `edit_file` on a `.kicad_sch`/`.kicad_pcb`, a throwaway kicad-cli export probes loadability: a newly unloadable file is reverted with kicad-cli's own error; a file that was already unloadable keeps the edit (reverting would deadlock incremental repair — every partial fix undone unless one edit fixes the whole file). `.kicad_pro`/`.kicad_sym`/`.kicad_mod` have no standalone load command, so they are exempt from probing: feeding them to a sch/pcb export would reject perfectly good files. Cost: one kicad-cli invocation per sch/pcb edit (~1 s), paid only on the mutation path.
+
+### D9: Zero-symbol schematics are bootstrap state for drift, with a check-side warning
+
+During `create`, docs legitimately lead the schematic (part-selection writes BOM.md before any symbol exists); comparing docs against an empty sheet deadlocked every docs-touching stage and taught the agent to strip BOM.md to appease the gate. `checkDrift` therefore returns clean on zero symbols. Because `check` is the trustworthy CI gate, it separately surfaces a non-failing warning (log line + optional `drift.warning` JSON field, omitted when clean so the stable-key contract holds) when an empty schematic coexists with a populated BOM: bootstrap and an accidentally emptied schematic are indistinguishable mechanically, so a human gets the signal without the gate lying either way.
+
+### D10: Stall detection counts consecutive tool-less turns
+
+The no-tool-call nudge counter was cumulative over the run, so three sporadic empty completions anywhere failed an otherwise-converging run (observed live: three empties across 31 productive turns rolled back a run with 55 turns of budget left). The counter resets whenever the model calls tools again; only three consecutive tool-less turns count as a stall.
+
 ## Risks / Trade-offs
 
 - [Deferral heuristic misclassifies an affects item] → It only defers on a positive match against a missing artifact; ambiguous items (refdes, nets, free text) always open real obligations, and every deferral is named in the tool result and summary.

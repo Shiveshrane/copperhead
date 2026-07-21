@@ -100,3 +100,31 @@ The Anthropic provider SHALL send `cache_control: {type: "ephemeral"}` breakpoin
 
 - **WHEN** the API response reports `cache_read_input_tokens` or `cache_creation_input_tokens`
 - **THEN** the turn's `inputTokens` is the sum of uncached, cache-read, and cache-creation input tokens
+
+### Requirement: KiCad edit loadability validation
+
+After `edit_file` writes a `.kicad_sch` or `.kicad_pcb` file, the loop SHALL probe the file's loadability with kicad-cli. If the file was loadable before the edit but not after, the edit SHALL be reverted and the tool result SHALL carry kicad-cli's own error plus corrective guidance. If the file was already unloadable before the edit, the edit SHALL be kept (reverting would deadlock incremental repair) with the probe output in the result. Files kicad-cli cannot probe standalone (`.kicad_pro`, `.kicad_sym`, `.kicad_mod`) SHALL NOT be probed or reverted.
+
+#### Scenario: Corrupting edit is reverted with the reason (AC-15.20)
+
+- **WHEN** an `edit_file` call would make a previously loadable schematic fail to load in KiCad
+- **THEN** the file is restored to its pre-edit content and the result says the edit was reverted, quoting kicad-cli's error
+
+#### Scenario: Unprobeable KiCad files are edited normally (AC-15.21)
+
+- **WHEN** `edit_file` targets a `.kicad_pro`, `.kicad_sym`, or `.kicad_mod` file
+- **THEN** the edit is applied without any loadability probe or revert
+
+#### Scenario: Already-corrupt files accept repair edits (AC-15.22)
+
+- **WHEN** `edit_file` targets a schematic that already failed to load before the edit
+- **THEN** the edit is kept, and the result says the file was already unloadable and repair should continue
+
+### Requirement: Stall detection counts consecutive tool-less turns
+
+The no-tool-call nudge counter SHALL reset whenever the model calls tools again, so only consecutive tool-less turns count toward the stopped-without-finishing failure.
+
+#### Scenario: Sporadic empty completions do not fail a converging run (AC-15.27)
+
+- **WHEN** empty completions occur non-consecutively across an otherwise productive run
+- **THEN** the run is not failed for stalling; only three tool-less turns in a row are

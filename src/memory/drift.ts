@@ -35,6 +35,31 @@ export function parseMarkdownTables(md: string): TableRow[] {
 const isHeader = (row: TableRow): boolean =>
   row.cells.some((c) => /^(refdes|pin)$/i.test(c));
 
+/**
+ * The zero-symbol carve-out in checkDrift is right for the create pipeline,
+ * but it would let `check` silently pass an established repo whose schematic
+ * was emptied by accident while BOM.md still lists parts. `check` calls this
+ * alongside checkDrift and reports the result as a warning, not a failure:
+ * an empty sheet with a populated BOM is either bootstrap (fine) or an
+ * accident (worth a human look), and only a human can tell which.
+ */
+export async function emptySchematicWarning(
+  repoRoot: string,
+  docsDir: string,
+  schematic: string,
+): Promise<string | null> {
+  const symbols = await listSymbols(path.join(repoRoot, schematic));
+  if (symbols.length) return null;
+  const bomPath = path.join(repoRoot, docsDir, 'BOM.md');
+  if (!existsSync(bomPath)) return null;
+  const refs = parseMarkdownTables(await readFile(bomPath, 'utf8'))
+    .filter((r) => !isHeader(r))
+    .map((r) => r.cells[0])
+    .filter(Boolean);
+  if (!refs.length) return null;
+  return `schematic has zero symbols but BOM.md lists ${refs.length} refdes; if this repo is not mid-bootstrap, the schematic may have been emptied accidentally`;
+}
+
 export async function checkDrift(repoRoot: string, docsDir: string, schematic: string): Promise<DriftMismatch[]> {
   const mismatches: DriftMismatch[] = [];
   const schPath = path.join(repoRoot, schematic);

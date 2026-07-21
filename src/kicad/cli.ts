@@ -70,7 +70,17 @@ export function runErc(schPath: string): Promise<CheckReport> {
  * time (with KiCad's own error) beats an opaque failure at ERC/DRC time.
  * Returns null when the file loads.
  */
+/**
+ * Only schematics and boards have a cheap standalone load probe. Project
+ * files and symbol/footprint libraries do not: feeding them to a sch/pcb
+ * export "probe" would reject perfectly good files.
+ */
+export function isProbeableKicadFile(p: string): boolean {
+  return /\.kicad_(sch|pcb)$/.test(p);
+}
+
 export async function kicadLoadError(filePath: string): Promise<string | null> {
+  if (!isProbeableKicadFile(filePath)) return null;
   const isSch = filePath.endsWith('.kicad_sch');
   const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-validate-'));
   const args = isSch

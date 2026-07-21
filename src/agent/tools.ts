@@ -3,7 +3,7 @@ import { writeFile, mkdir, appendFile, readFile } from 'node:fs/promises';
 import type { ToolSchema } from './types.js';
 import { toolReadFile, toolWriteFile, toolEditFile, toolSearch } from './filetools.js';
 import { resolveInRepo, isKicadFile } from '../util/paths.js';
-import { runErc, runDrc, exportSvg, exportFab, kicadLoadError } from '../kicad/cli.js';
+import { runErc, runDrc, exportSvg, exportFab, kicadLoadError, isProbeableKicadFile } from '../kicad/cli.js';
 import { formatViolations, type CheckReport } from '../kicad/report.js';
 import { listSymbols, listNets } from '../kicad/sexp.js';
 import { checkDrift } from '../memory/drift.js';
@@ -255,8 +255,10 @@ export const TOOLS: ToolDef[] = [
       // Text edits can corrupt an s-expression file in ways the editor cannot
       // see; a corrupted file then fails every later ERC/DRC with an opaque
       // error. Validate loadability with KiCad itself and roll the edit back
-      // rather than letting the file drift unusable.
-      const before = isKicadFile(rel) ? await readFile(abs, 'utf8') : null;
+      // rather than letting the file drift unusable. Only schematics and
+      // boards are probeable; .kicad_pro/.kicad_sym/.kicad_mod edits must not
+      // be probed (a sch/pcb probe rejects them wholesale).
+      const before = isProbeableKicadFile(rel) ? await readFile(abs, 'utf8') : null;
       const res = await toolEditFile(
         ctx.repoRoot,
         rel,
@@ -267,7 +269,17 @@ export const TOOLS: ToolDef[] = [
       if (before !== null) {
         const loadErr = await kicadLoadError(abs);
         if (loadErr) {
+          const after = await readFile(abs, 'utf8');
           await writeFile(abs, before, 'utf8');
+          if (await kicadLoadError(abs)) {
+            // The file was already unloadable before this edit. Reverting
+            // would deadlock incremental repair (every partial fix undone
+            // unless one edit fixes the whole file), so keep the edit and
+            // keep the pressure on with the probe output.
+            await writeFile(abs, after, 'utf8');
+            markTouched(ctx, rel);
+            return `${res}\nnote: ${rel} was already unloadable before this edit, so the edit is KEPT. Keep repairing until it loads. kicad-cli says:\n${loadErr}`;
+          }
           return `edit REVERTED: it would make ${rel} unloadable in KiCad. kicad-cli says:\n${loadErr}\nRe-read the surrounding file text and make a smaller, syntactically complete edit.`;
         }
       }

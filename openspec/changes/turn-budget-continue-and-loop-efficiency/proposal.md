@@ -13,6 +13,7 @@ Two consecutive `copperhead create` spec-seed runs exhausted the 40-turn budget 
 - `resolve_affected` accepts an array form (`resolutions: [...]`) so one call can clear a backlog.
 - The Anthropic provider sends `cache_control` breakpoints (system prompt, last tool definition, final message block), cutting repeated-prefix input cost on Claude runs by roughly an order of magnitude.
 - Smaller dials: `record_constraint` returns the running open-obligation count; `maxTurns` is configurable per create-pipeline stage via `stageMaxTurns` in config; `search` rejects empty patterns with a corrective hint; `run_erc`/`run_drc` without a configured artifact say the check is not applicable yet so the model stops retrying.
+- Create-pipeline hardening from live runs (#19, #21, #23, #25): stage completion is content-aware (schematic needs symbols plus drift-clean docs, layout-draft needs a placed footprint) and re-checked after each successful run, halting instead of advancing over planning-only output; `edit_file` on a schematic/board is probe-validated with kicad-cli and reverted if it makes a loadable file unloadable (already-corrupt files keep repair edits; unprobeable `.kicad_pro`/`.kicad_sym`/`.kicad_mod` are exempt); zero-symbol schematics are drift-exempt bootstrap state, with a non-failing `check` warning when BOM.md still lists parts; missing ERC/DRC reports surface kicad-cli's own error; only consecutive tool-less turns count as a stall.
 
 ## Capabilities
 
@@ -22,9 +23,11 @@ Two consecutive `copperhead create` spec-seed runs exhausted the 40-turn budget 
 
 ### Modified Capabilities
 
-- `agent-core`: turn-budget exhaustion becomes a continue-or-fail decision with token usage visible; prompts instruct tool-call batching; obligation bookkeeping skips nonexistent artifacts; `resolve_affected` gains an array form; tool results gain convergence feedback (open-obligation count, not-applicable verification, empty-pattern rejection); the Anthropic provider uses prompt caching.
+- `agent-core`: turn-budget exhaustion becomes a continue-or-fail decision with token usage visible; prompts instruct tool-call batching; obligation bookkeeping skips nonexistent artifacts; `resolve_affected` gains an array form; tool results gain convergence feedback (open-obligation count, not-applicable verification, empty-pattern rejection); the Anthropic provider uses prompt caching; `edit_file` probe-validates schematic/board loadability with revert/keep semantics; stall detection counts only consecutive tool-less turns.
 - `safety-rails`: rollback on failure preserves the failed work in a git stash entry before restoring the snapshot.
-- `create-pipeline`: per-stage turn budgets via `stageMaxTurns` config.
+- `create-pipeline`: per-stage turn budgets via `stageMaxTurns` config; content-aware stage completion contracts re-checked after each successful run.
+- `docs-memory`: zero-symbol schematics are drift-exempt bootstrap state; `check` warns (without failing) when an empty schematic coexists with a populated BOM.
+- `kicad-tooling`: missing ERC/DRC reports raise kicad-cli's own error instead of an opaque report-read failure.
 
 ## Impact
 
