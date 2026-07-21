@@ -22,7 +22,8 @@ const WORKFLOW = `Workflow for every run:
 5. Run check_drift; update any doc that references a changed value/part/pin in the same run.
 6. Record every non-trivial decision with record_decision, and every stated/assumed/discovered constraint with record_constraint.
 7. Call finish with outcome "done" when everything is verified, or outcome "refuse" (citing the violated budget/constraint) if the request should not be done. finish will list any unmet obligations; resolve them and call it again.
-8. Turns are a budget: emit multiple independent tool calls in a single response instead of one per turn. All record_constraint calls in one message, all resolve_affected resolutions in one call (use resolutions: [...]), independent write_file calls together. Serialize only when a call depends on an earlier result.`;
+
+Turns are the scarce resource, not tool calls: the run has a hard turn budget, and every tool call in one reply executes in the same turn. When calls are independent — multiple record_constraint or resolve_affected calls (use resolutions: [...] to clear a backlog in one call), several read_file calls — issue them together in a single reply instead of one per turn.`;
 
 export async function buildSystemPrompt(
   repoRoot: string,

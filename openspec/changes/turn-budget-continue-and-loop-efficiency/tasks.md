@@ -2,7 +2,7 @@
 
 ## 1. Ledger and git plumbing
 
-- [x] 1.1 `src/agent/ledger.ts`: add a deferred-obligations list (`defer(kind, detail, openedBy)`, `deferredObligations`, include deferred items in `describe()` output under a separate label); deferred items never affect `isClear`
+- [x] 1.1 (Superseded by main during merge: deferral is persisted in `constraints.json` via `classifyAffectsTarget`/`reopenDeferredAffects`; this PR's in-run ledger `defer` list was dropped in favor of it. See design D3.)
 - [x] 1.2 `src/util/git.ts`: add `preserveFailedRun(repo, runId)`: if the tree is dirty, `git add -A`, `git stash create`, `git stash store -m "copperhead failed run <runId>"`, return the stash sha; return null on a clean tree; never throw (return null on any git error)
 
 ## 2. Loop: continue prompt and preservation
@@ -15,10 +15,10 @@
 ## 3. Tool ergonomics
 
 - [x] 3.1 `src/agent/prompts.ts`: add the batch-tool-calls instruction to `WORKFLOW`
-- [x] 3.2 `src/agent/tools.ts` `record_constraint`: classify `affects` items (schematic-ish / board-ish / doc-ish) against config and the docs dir; defer positively-matched missing artifacts via the ledger, open obligations for the rest; return message names deferred items and the running open-obligation count
+- [x] 3.2 (Superseded by main: `record_constraint` deferral now uses the persisted registry mechanism from main; this PR keeps only the `resolve_affected` batch form on top of it.)
 - [x] 3.3 `src/agent/tools.ts` `resolve_affected`: accept optional `resolutions` array; resolve entries independently with per-entry results; keep single-form behavior; corrective error when neither form is given
 - [x] 3.4 `src/agent/tools.ts`: `search` rejects empty `pattern` with a corrective hint; `run_erc`/`run_drc` no-artifact messages say the check is not applicable yet and should not be retried until the artifact exists
-- [x] 3.5 `src/agent/loop.ts` + `src/agent/transcript.ts`: surface deferred obligations in `summary.md` when any exist
+- [x] 3.5 (Dropped with the in-run deferral: main persists deferred items in `constraints.json`, so no separate `summary.md` section is needed.)
 
 ## 4. Anthropic prompt caching
 
@@ -34,7 +34,7 @@
 
 - [x] 6.1 Loop: exhaustion with a granting callback continues and can succeed; declining callback and absent callback fail-and-restore; stats carry token usage (fake provider)
 - [x] 6.2 Git: `preserveFailedRun` stashes tracked + untracked work and names the run id; clean tree returns null; failed-run work is recoverable via `git stash apply` after restore
-- [x] 6.3 Tools: deferral scenarios (AC-15.7 / AC-15.8), array `resolve_affected` (AC-15.9 / AC-15.10), obligation count in `record_constraint` result, empty-pattern search hint, not-applicable ERC/DRC messages
+- [x] 6.3 Tools: reconciled deferral contract (persisted `deferred[]`, refdes/existing artifacts open), array `resolve_affected` (AC-15.9 / AC-15.10), empty-pattern search hint, does-not-apply-yet ERC/DRC messages
 - [x] 6.4 Prompts: WORKFLOW and the nudge contain the batching instruction
 - [x] 6.5 Anthropic provider: request carries the three cache-control breakpoints; usage sums cached token fields (mock SDK)
 - [x] 6.6 Config/create: `stageMaxTurns` parsed and applied per stage; absent map means global default

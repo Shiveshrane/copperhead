@@ -7,7 +7,7 @@ import { runErc, runDrc, exportSvg, exportFab, kicadLoadError, isProbeableKicadF
 import { formatViolations, type CheckReport } from '../kicad/report.js';
 import { listSymbols, listNets } from '../kicad/sexp.js';
 import { checkDrift } from '../memory/drift.js';
-import { saveConstraint } from '../memory/constraints.js';
+import { saveConstraint, classifyAffectsTarget, affectsTargetExists } from '../memory/constraints.js';
 import { openspecValidate } from '../openspec/cli.js';
 import { existsSync } from 'node:fs';
 import type { CopperheadConfig } from '../config.js';
@@ -51,41 +51,6 @@ const str = (args: Record<string, unknown>, key: string): string => {
   if (typeof v !== 'string' || v === '') throw new Error(`missing required string arg "${key}"`);
   return v;
 };
-
-/**
- * Why an `affects` item's target artifact does not exist yet, or null when it
- * exists or the item cannot be positively classified (issue #15: obligations
- * for artifacts that do not exist yet drain the turn budget on no-op
- * resolutions). Only positive matches defer; ambiguous items (refdes, nets,
- * free text) always open real obligations.
- */
-const KNOWN_DOCS = ['BOM', 'PINOUT', 'SPEC', 'SUBSYSTEMS', 'LAYOUT', 'DEVPLAN', 'DECISIONS', 'CHANGELOG'];
-
-function missingArtifactReason(ctx: RunContext, item: string): string | null {
-  // Docs are scaffolded with uppercase basenames; accept any casing in the
-  // affects item ("bom.md" must find BOM.md on a case-sensitive filesystem).
-  const docReason = (docName: string): string | null => {
-    const candidates = [...new Set([docName, docName.toUpperCase()])].flatMap((n) => [
-      path.join(ctx.repoRoot, ctx.config.docs, `${n}.md`),
-      path.join(ctx.repoRoot, `${n}.md`),
-    ]);
-    return candidates.some((p) => existsSync(p)) ? null : `${docName}.md does not exist yet`;
-  };
-  // An explicit .md filename is a doc reference even when its basename is a
-  // board-ish word (LAYOUT.md), so it is classified before the keyword checks.
-  const md = /^([\w-]+)\.md$/i.exec(item.trim());
-  if (md) return docReason(md[1]!);
-  const l = item.toLowerCase();
-  if (/\.kicad_sch\b/.test(l) || /\bschematic\b/.test(l)) {
-    return ctx.config.schematic ? null : 'no schematic configured yet';
-  }
-  if (/\.kicad_pcb\b/.test(l) || /\b(layout|board|pcb)\b/.test(l)) {
-    return ctx.config.board ? null : 'no board configured yet';
-  }
-  const bare = KNOWN_DOCS.find((d) => item.trim().toUpperCase() === d);
-  if (bare) return docReason(bare);
-  return null;
-}
 
 function markTouched(ctx: RunContext, rel: string): void {
   ctx.filesTouched.add(rel);
@@ -134,10 +99,11 @@ export const TOOLS: ToolDef[] = [
     },
     requiresUnlock: false,
     handler: async (ctx, args) => {
-      if (typeof args.pattern !== 'string' || args.pattern.trim() === '') {
-        return 'error: search requires a non-empty regex pattern, e.g. {"pattern": "KEY_DAH", "glob": "**/*.kicad_sch"}. To browse a file, use read_file instead.';
+      const pattern = args.pattern;
+      if (typeof pattern !== 'string' || pattern.trim() === '') {
+        return 'error: search requires a non-empty regex in "pattern" (narrow by file with "glob", e.g. {"pattern": "GPIO", "glob": "**/*.md"}); to list files, use a broad pattern like "." with a glob';
       }
-      const matches = await toolSearch(ctx.repoRoot, str(args, 'pattern'), args.glob as string | undefined);
+      const matches = await toolSearch(ctx.repoRoot, pattern, args.glob as string | undefined);
       if (!matches.length) return 'no matches';
       return matches.map((m) => `${m.file}:${m.line}: ${m.text}`).join('\n');
     },
@@ -313,9 +279,8 @@ export const TOOLS: ToolDef[] = [
     },
     requiresUnlock: false,
     handler: async (ctx) => {
-      if (!ctx.config.schematic) {
-        return 'no schematic configured yet; ERC is not applicable at this stage. Do not retry until a schematic exists and is configured.';
-      }
+      if (!ctx.config.schematic)
+        return 'no schematic configured; ERC does not apply yet — skip it until a schematic exists and is set in .copperhead/config.json';
       const report = await runErc(path.join(ctx.repoRoot, ctx.config.schematic));
       ctx.lastErc = report;
       if (report.ok) ctx.ledger.clear('erc');
@@ -331,9 +296,8 @@ export const TOOLS: ToolDef[] = [
     },
     requiresUnlock: false,
     handler: async (ctx) => {
-      if (!ctx.config.board) {
-        return 'no board configured yet; DRC is not applicable at this stage. Do not retry until a board exists and is configured.';
-      }
+      if (!ctx.config.board)
+        return 'no board configured; DRC does not apply yet — skip it until a board exists and is set in .copperhead/config.json';
       const report = await runDrc(path.join(ctx.repoRoot, ctx.config.board));
       ctx.lastDrc = report;
       if (report.ok) ctx.ledger.clear('drc');
@@ -433,6 +397,19 @@ export const TOOLS: ToolDef[] = [
     handler: async (ctx, args) => {
       const key = str(args, 'key');
       const affects = (args.affects as string[]) ?? [];
+      // An affects item whose target artifact is not built yet (no schematic or
+      // board configured, no BOM.md) has nothing to revisit; opening an
+      // obligation now only forces a ceremonial "not yet created" resolution.
+      // Defer it in the registry instead — reopenDeferredAffects re-opens it at
+      // the start of the first run where the artifact exists, which is when the
+      // revisit actually means something.
+      const deferred: string[] = [];
+      const openNow: string[] = [];
+      for (const item of affects) {
+        const target = classifyAffectsTarget(item);
+        if (target && !affectsTargetExists(target, ctx.repoRoot, ctx.config)) deferred.push(item);
+        else openNow.push(item);
+      }
       await saveConstraint(ctx.repoRoot, key, {
         ...(args.min !== undefined ? { min: args.min as number } : {}),
         ...(args.max !== undefined ? { max: args.max as number } : {}),
@@ -440,25 +417,17 @@ export const TOOLS: ToolDef[] = [
         ...(args.value !== undefined ? { value: args.value as string } : {}),
         source: str(args, 'source'),
         affects,
+        ...(deferred.length ? { deferred } : {}),
       });
-      // The registry keeps the full affects[] either way; obligations only open
-      // for artifacts that exist now, the rest are deferred (issue #15).
-      const opened: string[] = [];
-      const deferred: string[] = [];
-      for (const item of affects) {
-        const missing = missingArtifactReason(ctx, item);
-        if (missing) {
-          ctx.ledger.defer('affects-revisit', `${key} affects ${item}`, key);
-          deferred.push(`${item} (${missing})`);
-        } else {
-          opened.push(item);
-        }
-      }
-      ctx.ledger.onConstraintChange(key, opened);
+      ctx.ledger.onConstraintChange(key, openNow);
       ctx.ledger.clear('constraint-dual-write', key);
-      const parts = [`constraint ${key} recorded`, `revisit obligations opened for: ${opened.join(', ') || '(none)'}`];
-      if (deferred.length) parts.push(`deferred until the artifact exists: ${deferred.join(', ')}`);
-      parts.push(`open obligations now: ${ctx.ledger.openObligations.length}`);
+      const parts = [`constraint ${key} recorded`];
+      parts.push(`revisit obligations opened for: ${openNow.join(', ') || '(none)'}`);
+      if (deferred.length) {
+        parts.push(
+          `deferred until the target artifact exists (no resolve_affected needed now): ${deferred.join(', ')}`,
+        );
+      }
       return parts.join('; ');
     },
   },

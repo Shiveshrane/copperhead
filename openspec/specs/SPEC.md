@@ -208,6 +208,8 @@ The agent maintains `.copperhead/constraints.json` — a live, machine-readable 
 
 Loaded into every run's system prompt; `check` validates the design against it mechanically where possible (leakage sums, keepout geometry, forbidden pins). The `affects` field is what makes propagation reliable — change a constraint and the agent knows exactly which parts to revisit.
 
+An `affects` item that targets an artifact that does not exist yet (schematic, board, or BOM recorded before their pipeline stage) opens no revisit obligation at record time — it is marked `deferred` in the registry instead, and the obligation re-opens automatically at the start of the first run where the artifact exists. This keeps early docs-only stages from burning turns on ceremonial "not yet created" resolutions without losing the reconciliation guarantee: the revisit still happens, at the moment it can actually change the design.
+
 ### Change workflow (OpenSpec propose → apply → archive)
 
 - `copperhead do "<request>"` first generates `openspec/changes/<id>/` (proposal.md, spec deltas, tasks.md), then implements against it; the ERC/DRC-clean commit archives the change. Every hardware change gets a paper trail: *why → what spec changed → what files changed → verification result*
@@ -444,9 +446,8 @@ Format: Given / When / Then. "Fixture" = the open-telegraph repo (or the tiny te
 - **AC-15.3 (non-interactive unchanged)** With no callback (CI, pipes), exhaustion fails and restores exactly as before.
 - **AC-15.4 (cost visible)** The decision point shows turns used, files touched, open obligations, and cumulative tokens in/out.
 - **AC-15.5 / AC-15.6 (batching guidance)** The system prompt workflow and the 5-turns-remaining nudge both instruct emitting multiple independent tool calls per response.
-- **AC-15.7 / AC-15.8 (deferral)** `record_constraint` defers, rather than opens, `affects-revisit` obligations whose target artifact does not exist yet (no schematic/board configured, doc absent); deferred items never block `finish` and are named in the tool result and run summary. Existing artifacts still open obligations as before.
 - **AC-15.9 / AC-15.10 (batch resolution)** `resolve_affected` accepts `resolutions: [...]`; entries resolve independently with per-entry results.
-- **AC-15.11 – AC-15.13 (convergence feedback)** `record_constraint` returns the running open-obligation count; `run_erc`/`run_drc` without a configured artifact read as not-applicable-yet; `search` rejects an empty pattern with a corrective hint.
+- **AC-15.12 / AC-15.13 (convergence feedback)** `run_erc`/`run_drc` without a configured artifact read as not-applicable-yet; `search` rejects an empty pattern with a corrective hint. (Obligation deferral for not-yet-built artifacts is provided by the persisted constraint-registry mechanism in AC-8's change, not re-implemented here.)
 - **AC-15.14 / AC-15.15 (prompt caching)** The Anthropic provider sends three `cache_control` breakpoints (system, last tool, last message block) and counts cache-read/creation tokens in reported input usage.
 - **AC-15.16 / AC-15.17 (work preservation)** Any run failure with touched files leaves a `copperhead failed run <run-id>` stash entry holding the work while the tree is restored byte-identical; a clean failure leaves no stash.
 - **AC-15.18 / AC-15.19 (per-stage budgets)** `stageMaxTurns` in config overrides `maxTurns` for named create-pipeline stages; absent entries change nothing.
@@ -455,6 +456,18 @@ Format: Given / When / Then. "Fixture" = the open-telegraph repo (or the tiny te
 - **AC-15.25 / AC-15.26 (drift bootstrap)** Zero-symbol schematics produce no drift mismatches; `check` surfaces a non-failing warning when an empty schematic coexists with a populated BOM.md.
 - **AC-15.27 (consecutive stalls)** Only consecutive tool-less turns count toward the stopped-without-finishing failure; the counter resets on any tool call.
 - **AC-15.28 (load-failure ERC/DRC)** A missing ERC/DRC report raises an error quoting kicad-cli's own output and naming the likely load failure.
+### AC-8 · Run observability (change: record-run-metadata)
+
+- **AC-8.1 (metadata completeness)** The `run-start` event of any agent-loop run contains: copperhead version + install path, `kicad-cli`/Node/platform versions, model id + provider + selection source (`flag`/`env`/`config`/`openai-key`/`anthropic-key`), run id + ISO timestamp + command, interactive flag, the resolved config snapshot (`schematic`, `board`, `docs`, effective `maxTurns`, `maxRepairCycles`, `budgets`), git commit/branch/dirty + uncommitted count, pre-commit-hook presence, and open-constraint + prior-run counts. The pre-existing `request`/`model`/`provider` fields keep their names. Collection is LLM-free and network-free.
+- **AC-8.2 (resolved, not raw)** `do "x" --max-turns 12` in a repo whose config says `maxTurns: 40` records turn budget **12**, and the selection source names the actual winner of flag > `COPPERHEAD_MODEL` > config > key-fallback. A repo with no schematic records `schematic: null` (key present).
+- **AC-8.3 (probe degradation)** A failing environment probe (e.g. git branch unavailable) yields `null` for that field only; all other fields populate and the run proceeds — a metadata failure never aborts or alters a run.
+- **AC-8.4 (three surfaces, one source)** `summary.md` contains an `## Environment` section whose values match the `run-start` event, and the CLI prints a header of ≤ 2 lines before the first turn showing at minimum: version, model + provider + selection source, stage `name (k/N)` when in a `create` pipeline, and turn budget.
+- **AC-8.5 (run-end addenda on every path)** Every terminal branch (success, refusal, turn-budget, repair-cycles, provider error, stall, commit failure) emits a `run-end` event and a `## Run stats` summary section with: exit path (`done`/`refused`/`turn-budget-exhausted`/`repair-cycles-exhausted`/`commit-failed`/`provider-error`/`stalled`), turns used vs budget, repair cycles used vs budget, token totals + per-turn breakdown, and wall-clock duration; the CLI prints one final outcome line (exit path, verification, commit hash if any, duration, tokens).
+- **AC-8.6 (commit failure is an outcome)** When the end-of-run git commit fails (e.g. `git add -A` exits 128 on an embedded repo), the run rolls back per the snapshot contract and ends with `exitPath: commit-failed`; `summary.md` is still written and names the git error; no unhandled stack trace reaches the user.
+- **AC-8.7 (progress with tokens)** In plain mode, each turn's output is prefixed `[turn k/N · <in> in / <out> out]` with cumulative totals (compact `12.3k` formatting); tool results stay one line each.
+- **AC-8.8 (interactive on a TTY)** With stdout a TTY and neither `--json` nor `--plain`: a bottom-pinned status line redraws in place (spinner while a provider call is in flight, elapsed time, turn counter vs budget, cumulative tokens); assistant text and tool results scroll above it; the final outcome line replaces it; cursor and status line are restored/cleared on exit including Ctrl-C. A renderer reused across runs (the `create` pipeline) renders every stage: each outcome line releases the status line and the next stage re-establishes it.
+- **AC-8.9 (plain fallback)** With stdout piped, or `--json`, or the global `--plain` flag: output is line-oriented and contains zero ANSI escape sequences. With `--json`, progress lines go to stderr; stdout carries only the machine-readable result.
+- **AC-8.10 (redaction holds)** A string matching `sk-[A-Za-z0-9_-]+` planted in any metadata field appears redacted in both the persisted `run-start` event and `summary.md` (extends AC-4.1 to the new surfaces).
 
 ### AC-5 · Viewer (Phase 2 — only if built)
 

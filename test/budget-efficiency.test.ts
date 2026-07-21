@@ -10,6 +10,7 @@ import { Transcript } from '../src/agent/transcript.js';
 import { buildSystemPrompt } from '../src/agent/prompts.js';
 import { preserveFailedRun, snapshot, restore, isDirty } from '../src/util/git.js';
 import { loadConfig } from '../src/config.js';
+import { loadConstraints } from '../src/memory/constraints.js';
 import { runInit } from '../src/memory/scaffold.js';
 import { tempFixtureRepo } from './helpers.js';
 
@@ -250,25 +251,28 @@ describe('preserveFailedRun (safety-rails)', () => {
   });
 });
 
-describe('deferred revisit obligations (AC-15.7, AC-15.8)', () => {
-  it('does not open obligations for artifacts that do not exist yet', async () => {
+// Obligation deferral for not-yet-built artifacts is provided by the persisted
+// constraint-registry mechanism on main (classifyAffectsTarget +
+// reopenDeferredAffects); this PR keeps the resolve_affected batch form and the
+// budget/continue machinery on top of it. These two tests pin the reconciled
+// contract: a not-yet-built artifact defers (persisted, no in-run obligation),
+// an existing artifact and a bare refdes open obligations now.
+describe('deferred revisit obligations (reconciled with main)', () => {
+  it('does not open an obligation for an artifact that does not exist yet; persists it as deferred', async () => {
     const { repo, cleanup } = await tempFixtureRepo();
     try {
-      // no runInit: no docs/, and the default config has no schematic/board
       const ctx = await makeCtx(repo);
       expect(ctx.config.schematic).toBeNull();
       const res = await dispatchTool(ctx, 'record_constraint', {
         key: 'power.sleep_current_uA',
         max: 25,
         source: 'brief',
-        affects: ['schematic', 'layout', 'BOM.md'],
+        affects: ['schematic', 'layout'],
       });
       expect(ctx.ledger.openOfKind('affects-revisit')).toHaveLength(0);
-      expect(ctx.ledger.deferredObligations).toHaveLength(3);
-      expect(res).toContain('deferred until the artifact exists');
-      expect(res).toContain('schematic');
-      expect(res).toContain('BOM.md');
-      expect(res).toMatch(/open obligations now: \d+/);
+      expect(res).toContain('deferred until the target artifact exists');
+      const registry = await loadConstraints(repo);
+      expect(registry['power.sleep_current_uA']!.deferred).toEqual(['schematic', 'layout']);
       // deferral never blocks finish
       const done = await dispatchTool(ctx, 'finish', { outcome: 'done', summary: 'seeded' });
       expect(done).toContain('all gates satisfied');
@@ -277,7 +281,7 @@ describe('deferred revisit obligations (AC-15.7, AC-15.8)', () => {
     }
   });
 
-  it('still opens obligations when the artifact exists', async () => {
+  it('opens obligations for an existing artifact and for a bare refdes', async () => {
     const { repo, cleanup } = await tempFixtureRepo();
     try {
       await runInit({ repoRoot: repo, installHooks: false });
@@ -290,34 +294,8 @@ describe('deferred revisit obligations (AC-15.7, AC-15.8)', () => {
         affects: ['schematic', 'R1'],
       });
       expect(ctx.ledger.openOfKind('affects-revisit')).toHaveLength(2);
-      expect(ctx.ledger.deferredObligations).toHaveLength(0);
-    } finally {
-      await cleanup();
-    }
-  });
-
-  it('doc matching is case-insensitive and .md names beat board keywords (bom.md, LAYOUT.md)', async () => {
-    const { repo, cleanup } = await tempFixtureRepo();
-    try {
-      const { mkdir } = await import('node:fs/promises');
-      await mkdir(path.join(repo, 'docs'), { recursive: true });
-      await writeFile(path.join(repo, 'docs', 'BOM.md'), '# bom\n', 'utf8');
-      await writeFile(path.join(repo, 'docs', 'LAYOUT.md'), '# layout\n', 'utf8');
-      const ctx = await makeCtx(repo);
-      expect(ctx.config.board).toBeNull();
-      await dispatchTool(ctx, 'record_constraint', {
-        key: 'power.sleep_current_uA',
-        max: 25,
-        source: 'brief',
-        // bom.md exists as BOM.md (case); LAYOUT.md exists but contains the
-        // board-ish word "layout"; notes.md does not exist at all
-        affects: ['bom.md', 'LAYOUT.md', 'notes.md'],
-      });
-      const open = ctx.ledger.openOfKind('affects-revisit').map((o) => o.detail);
-      expect(open).toContain('power.sleep_current_uA affects bom.md');
-      expect(open).toContain('power.sleep_current_uA affects LAYOUT.md');
-      expect(ctx.ledger.deferredObligations).toHaveLength(1);
-      expect(ctx.ledger.deferredObligations[0]!.detail).toContain('notes.md');
+      const registry = await loadConstraints(repo);
+      expect(registry['power.sleep_current_uA']!.deferred).toBeUndefined();
     } finally {
       await cleanup();
     }
@@ -395,8 +373,8 @@ describe('convergence feedback (AC-15.12, AC-15.13)', () => {
     const { repo, cleanup } = await tempFixtureRepo();
     try {
       const ctx = await makeCtx(repo);
-      expect(await dispatchTool(ctx, 'run_erc', {})).toContain('not applicable');
-      expect(await dispatchTool(ctx, 'run_drc', {})).toContain('not applicable');
+      expect(await dispatchTool(ctx, 'run_erc', {})).toContain('does not apply yet');
+      expect(await dispatchTool(ctx, 'run_drc', {})).toContain('does not apply yet');
     } finally {
       await cleanup();
     }
@@ -407,7 +385,7 @@ describe('convergence feedback (AC-15.12, AC-15.13)', () => {
     try {
       const ctx = await makeCtx(repo);
       const res = await dispatchTool(ctx, 'search', { pattern: '' });
-      expect(res).toContain('non-empty regex pattern');
+      expect(res).toContain('non-empty regex');
       expect(res).toContain('e.g.');
     } finally {
       await cleanup();
@@ -420,7 +398,7 @@ describe('batching guidance in the system prompt (AC-15.5)', () => {
     const { repo, cleanup } = await tempFixtureRepo();
     try {
       const prompt = await buildSystemPrompt(repo, await loadConfig(repo), {});
-      expect(prompt).toContain('multiple independent tool calls in a single response');
+      expect(prompt).toContain('issue them together in a single reply');
       expect(prompt).toContain('resolutions: [...]');
     } finally {
       await cleanup();

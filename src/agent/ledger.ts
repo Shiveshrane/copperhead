@@ -20,7 +20,6 @@ export interface Obligation {
 
 export class ObligationsLedger {
   private open: Obligation[] = [];
-  private deferredList: Obligation[] = [];
 
   add(kind: ObligationKind, detail: string, openedBy: string): void {
     if (!this.open.some((o) => o.kind === kind && o.detail === detail)) {
@@ -63,29 +62,6 @@ export class ObligationsLedger {
 
   onDecision(summary: string): void {
     this.add('decision-log', summary, 'decision');
-  }
-
-  /**
-   * Record an obligation whose target artifact does not exist yet (e.g. a
-   * constraint that affects the schematic before any schematic is configured).
-   * Deferred items never block finish; they are surfaced in tool results and
-   * the run summary so the reconciliation duty stays visible.
-   */
-  defer(kind: ObligationKind, detail: string, openedBy: string): void {
-    if (!this.deferredList.some((o) => o.kind === kind && o.detail === detail)) {
-      this.deferredList.push({ kind, detail, openedBy });
-    }
-  }
-
-  get deferredObligations(): readonly Obligation[] {
-    return this.deferredList;
-  }
-
-  describeDeferred(): string | null {
-    if (!this.deferredList.length) return null;
-    return this.deferredList
-      .map((o) => `- [${o.kind}] ${o.detail} (deferred: artifact does not exist yet; opened by ${o.openedBy})`)
-      .join('\n');
   }
 
   get openObligations(): readonly Obligation[] {
