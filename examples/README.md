@@ -23,6 +23,8 @@ Difficulty here is not "how impressive is the product". It tracks how much the a
 | [![Coin-cell LED locator beacon concept render](images/coin-cell-led-beacon.webp)](simple/coin-cell-led-beacon.md) | [![Dual brushed-DC motor driver concept render](images/dual-brushed-dc-motor-driver.webp)](medium/dual-brushed-dc-motor-driver.md) | [![100W USB-C PD bench supply concept render](images/usb-c-pd-bench-supply.webp)](hard/usb-c-pd-bench-supply.md) |
 | [Coin-cell LED locator beacon](simple/coin-cell-led-beacon.md) | [Dual brushed-DC motor driver](medium/dual-brushed-dc-motor-driver.md) | [100W USB-C PD programmable bench supply](hard/usb-c-pd-bench-supply.md) |
 
+These previews are AI-generated concept renders, not KiCad outputs. They can communicate early layout intent, but they are not evidence of component selection, placement, routing, clearances, or verification. Any placement idea taken from a render must first become an explicit design constraint and then be checked in the actual KiCad project.
+
 ## Running one
 
 ```bash

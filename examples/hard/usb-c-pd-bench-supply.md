@@ -2,7 +2,7 @@
 
 ![100W USB-C PD bench supply concept render](../images/usb-c-pd-bench-supply.webp)
 
-*Illustrative concept render; component selection and layout are intentionally unresolved.*
+*AI-generated illustrative concept render, not a KiCad output or placement reference; component selection and layout are intentionally unresolved.*
 
 ## What it is
 

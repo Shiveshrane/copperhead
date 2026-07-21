@@ -2,7 +2,7 @@
 
 ![Coin-cell LED locator beacon concept render](../images/coin-cell-led-beacon.webp)
 
-*Illustrative concept render; component selection and layout are intentionally unresolved.*
+*AI-generated illustrative concept render, not a KiCad output or placement reference; component selection and layout are intentionally unresolved.*
 
 ## What it is
 
