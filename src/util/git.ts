@@ -3,6 +3,7 @@ import { cp, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { PreflightError } from './preflight.js';
 
 export interface GitSnapshot {
   head: string;
@@ -23,9 +24,52 @@ export async function isGitRepo(repo: string): Promise<boolean> {
   }
 }
 
+/** False on an unborn HEAD (fresh `git init` with no commits yet). */
+export async function hasCommits(repo: string): Promise<boolean> {
+  try {
+    await git(repo, ['rev-parse', '--quiet', '--verify', 'HEAD']);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function isDirty(repo: string): Promise<boolean> {
   const status = await git(repo, ['status', '--porcelain']);
   return status.length > 0;
+}
+
+/**
+ * The run-blocking git gates, in order: repo -> commits -> dirty (AC-3.8).
+ * Throws a PreflightError whose message explains why the run is refused and
+ * how to fix it; a caller that catches only needs err.message.
+ */
+export async function gitPreflight(repo: string, opts: { allowDirty?: boolean } = {}): Promise<void> {
+  if (!(await isGitRepo(repo))) {
+    throw new PreflightError(
+      'not a git repository; copperhead requires git for snapshots and rollback',
+      'every run snapshots HEAD before editing so a failed run can be rolled back losslessly; without git there is no snapshot and no undo',
+      ['git init', 'git add -A && git commit -m "initial commit"', 'rerun the same copperhead command'],
+    );
+  }
+  if (!(await hasCommits(repo))) {
+    throw new PreflightError(
+      'repository has no commits; copperhead requires at least one commit for snapshots and rollback',
+      'the pre-run snapshot is the current HEAD commit; with an unborn HEAD there is nothing to roll back to if verification fails',
+      ['git add -A && git commit -m "initial commit"', 'rerun the same copperhead command'],
+    );
+  }
+  if ((await isDirty(repo)) && !opts.allowDirty) {
+    throw new PreflightError(
+      'working tree is dirty; copperhead refuses to run on uncommitted changes by default',
+      'a rollback hard-resets to the pre-run snapshot, which would silently destroy your uncommitted work',
+      [
+        'git add -A && git commit — to keep your changes (recommended)',
+        'git stash — to set them aside for now',
+        'or rerun with --allow-dirty to let copperhead preserve them via "git stash create"',
+      ],
+    );
+  }
 }
 
 /**
@@ -91,6 +135,21 @@ export async function restore(repo: string, snap: GitSnapshot): Promise<void> {
       }
     }
   }
+}
+
+/** Current branch name, or "HEAD" when detached. Read-only metadata probe. */
+export async function branchName(repo: string): Promise<string> {
+  return git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']);
+}
+
+export async function headCommit(repo: string): Promise<string> {
+  return git(repo, ['rev-parse', 'HEAD']);
+}
+
+/** Count of uncommitted paths (staged, unstaged, and untracked). */
+export async function uncommittedCount(repo: string): Promise<number> {
+  const status = await git(repo, ['status', '--porcelain']);
+  return status ? status.split('\n').length : 0;
 }
 
 export async function commitAll(repo: string, message: string): Promise<string> {
