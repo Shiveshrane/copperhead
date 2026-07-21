@@ -1,5 +1,9 @@
 # Brief: Dual brushed-DC motor driver
 
+![Dual brushed-DC motor driver concept render](../images/dual-brushed-dc-motor-driver.webp)
+
+*Illustrative concept render; component selection and layout are intentionally unresolved.*
+
 ## What it is
 
 A controller-less dual brushed-DC motor driver for a small battery-powered robot. It accepts independent logic-level commands from an external controller, drives two motors from a 2S or 3S battery, and exposes current and fault signals for both channels. The interesting parts are sizing the power path for simultaneous stalls and handling energy returned by braking, not adding local intelligence.

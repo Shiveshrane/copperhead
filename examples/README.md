@@ -8,11 +8,20 @@ Difficulty here is not "how impressive is the product". It tracks how much the a
 | --- | --- | --- |
 | Simple | [usb-c-breakout.md](simple/usb-c-breakout.md) | One connector, passives, no firmware, no budgets in tension |
 | Simple | [rp2040-blinky.md](simple/rp2040-blinky.md) | Single MCU with a vendor reference design to follow |
+| Simple | [coin-cell-led-beacon.md](simple/coin-cell-led-beacon.md) | Pulse-current vs. battery-life budget, no firmware |
 | Medium | [dual-brushed-dc-motor-driver.md](medium/dual-brushed-dc-motor-driver.md) | Stall-current sizing, thermal limits, and regenerative braking |
 | Medium | [esp32-soil-sensor.md](medium/esp32-soil-sensor.md) | Battery budget vs. radio duty cycle, ADC accuracy, sleep current |
 | Medium | [usb-midi-controller.md](medium/usb-midi-controller.md) | Pin count pressure, mechanical constraints, USB compliance |
+| Hard | [usb-c-pd-bench-supply.md](hard/usb-c-pd-bench-supply.md) | PD contracts, 100W conversion, thermal and cable limits |
 | Hard | [lifepo4-bms.md](hard/lifepo4-bms.md) | Safety-critical, high current, thermal and isolation constraints |
 | Hard | [gnss-lora-tracker.md](hard/gnss-lora-tracker.md) | Two RF chains, antenna coexistence, power budget across three modes |
+
+## Featured brief previews
+
+| Simple | Medium | Hard |
+| --- | --- | --- |
+| [![Coin-cell LED locator beacon concept render](images/coin-cell-led-beacon.webp)](simple/coin-cell-led-beacon.md) | [![Dual brushed-DC motor driver concept render](images/dual-brushed-dc-motor-driver.webp)](medium/dual-brushed-dc-motor-driver.md) | [![100W USB-C PD bench supply concept render](images/usb-c-pd-bench-supply.webp)](hard/usb-c-pd-bench-supply.md) |
+| [Coin-cell LED locator beacon](simple/coin-cell-led-beacon.md) | [Dual brushed-DC motor driver](medium/dual-brushed-dc-motor-driver.md) | [100W USB-C PD programmable bench supply](hard/usb-c-pd-bench-supply.md) |
 
 ## Running one
 
