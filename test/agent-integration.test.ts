@@ -110,16 +110,17 @@ for (const { model, key } of providers) {
     );
 
     it(
-      'AC-3.6: persistent violations roll back to a byte-identical tree',
+      'AC-3.6: a structurally forced failure rolls back to a byte-identical tree',
       async () => {
         const { repo, cleanup } = await setupRepo();
         try {
-          // an impossible request with a tiny turn budget forces failure
+          // One turn forces failure structurally for every provider: edit tools
+          // cannot be exposed until a proposal validates during that first turn.
           const res = await runAgentLoop({
             repoRoot: repo,
             request: 'rename net KEY_DAH to KEY_DASH',
             model,
-            maxTurns: 2,
+            maxTurns: 1,
             log: () => {},
           });
           expect(res.outcome).toBe('failure');

@@ -119,14 +119,26 @@ async function appendChangelog(
  */
 export async function runAgentLoop(opts: RunOptions): Promise<RunResult> {
   const memory = await openSynapMemory({ repoRoot: opts.repoRoot, log: opts.log });
+  const providers = new Set<Provider>();
   try {
-    return await runWithMemory(opts, memory);
+    return await runWithMemory(opts, memory, providers);
   } finally {
+    for (const provider of providers) {
+      try {
+        await provider.close?.();
+      } catch (err) {
+        opts.log?.(`warning: ${provider.name} provider cleanup failed (${(err as Error).message})`);
+      }
+    }
     await memory?.close();
   }
 }
 
-async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Promise<RunResult> {
+async function runWithMemory(
+  opts: RunOptions,
+  memory: SynapMemory | null,
+  providers: Set<Provider>,
+): Promise<RunResult> {
   const r = opts.renderer ?? plainRenderer(opts.log ?? ((l: string) => console.log(l)));
   const log = (l: string): void => r.log(l);
   const repoRoot = opts.repoRoot;
@@ -158,6 +170,7 @@ async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Prom
   };
 
   let provider = opts.provider ?? (await makeProvider(opts.model));
+  providers.add(provider);
 
   // Deterministic, LLM-free metadata block: collected once, rendered onto all
   // three surfaces (run-start event, summary ## Environment, CLI header) so
@@ -324,6 +337,7 @@ async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Prom
           log(`failing over ${provider.name} → ${fallback.name}`);
           await transcript.event('provider-failover', { from: provider.name, to: fallback.name });
           provider = fallback;
+          providers.add(provider);
           turn--;
           continue;
         }

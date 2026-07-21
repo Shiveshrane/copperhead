@@ -20,7 +20,7 @@ The agent core SHALL implement a tool-use loop behind a `Provider` interface (`c
 ## ADDED Requirements
 
 ### Requirement: Codex cannot bypass Copperhead mutations
-The Codex provider SHALL run with a read-only sandbox, approval policy `never`, model-initiated network access and web search disabled, and a unique temporary working directory. The sandbox SHALL prevent native mutations; avoiding native reads SHALL be prompt-enforced because the read-only sandbox does not confine reads to the working directory. Every requested action SHALL be returned as structured output and dispatched by Copperhead.
+The Codex provider SHALL run with a read-only sandbox, approval policy `never`, model-initiated network access and web search disabled, and a unique temporary working directory that is removed when the provider closes. The sandbox SHALL prevent native mutations; avoiding native reads SHALL be prompt-enforced because the read-only sandbox does not confine reads to the working directory. Every requested action SHALL be returned as structured output, validated against the selected tool's parameter schema, and dispatched by Copperhead. Messages and tool results SHALL be framed as JSON data rather than unescaped pseudo-XML.
 
 #### Scenario: Edit tools remain structurally absent
 - **WHEN** a Codex turn occurs before its OpenSpec proposal validates
@@ -28,11 +28,15 @@ The Codex provider SHALL run with a read-only sandbox, approval policy `never`, 
 
 #### Scenario: Rejected structured turn retains its input
 - **WHEN** Codex returns an unavailable tool name, malformed arguments, or another invalid structured turn
-- **THEN** the provider retries once with the validation error and original unaccepted input, and advances its message cursor only after a valid replacement turn
+- **THEN** the provider retries once in the same thread with the validation error, does not duplicate the original prompt, and advances its message cursor only after a valid replacement turn
 
 #### Scenario: Native Codex edit is impossible
 - **WHEN** Codex processes any Copperhead turn
 - **THEN** its native sandbox cannot write the target repository and only Copperhead's gated tool dispatcher can mutate files
+
+#### Scenario: Codex-local data is outside Copperhead redaction
+- **WHEN** Codex processes a Copperhead turn
+- **THEN** documentation warns that host-readable files are not technically confined and that `~/.codex/sessions/` logs are outside Copperhead's transcript-redaction boundary
 
 ### Requirement: Codex authentication remains external
 Copperhead SHALL invoke the installed Codex CLI and allow it to manage saved authentication. Copperhead SHALL NOT read, copy, serialize, or log the saved ChatGPT credential.
