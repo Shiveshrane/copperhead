@@ -7,8 +7,9 @@ import { redactSecrets } from '../src/util/redact.js';
 import { withRetry } from '../src/util/retry.js';
 import { toolWriteFile, toolEditFile, toolSearch } from '../src/agent/filetools.js';
 import { Transcript } from '../src/agent/transcript.js';
-import { isDirty, snapshot, restore } from '../src/util/git.js';
+import { isDirty, hasCommits, snapshot, restore } from '../src/util/git.js';
 import { tempFixtureRepo } from './helpers.js';
+import { execa } from 'execa';
 
 describe('path sandbox (AC-4.2)', () => {
   it('rejects traversal outside the repo root', () => {
@@ -139,6 +140,19 @@ describe('retry', () => {
 });
 
 describe('git guard (AC-3.8, AC-3.6)', () => {
+  it('hasCommits distinguishes an unborn HEAD from a committed repo', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'ch-'));
+    expect(await hasCommits(dir)).toBe(false); // not a repo at all
+    await execa('git', ['init', '-q'], { cwd: dir });
+    expect(await hasCommits(dir)).toBe(false); // repo, but no commits yet
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      expect(await hasCommits(repo)).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+
   it('snapshot and restore leave the tree byte-identical', async () => {
     const { repo, cleanup } = await tempFixtureRepo();
     try {

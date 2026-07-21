@@ -8,7 +8,7 @@ import { loadConstraints } from '../memory/constraints.js';
 import { loadConfig, type CopperheadConfig } from '../config.js';
 import { Transcript } from './transcript.js';
 import { ObligationsLedger } from './ledger.js';
-import { isDirty, isGitRepo, snapshot, restore, commitAll, changedFiles } from '../util/git.js';
+import { isDirty, isGitRepo, hasCommits, snapshot, restore, commitAll, changedFiles } from '../util/git.js';
 import { withRetry, isRateLimit } from '../util/retry.js';
 import { openspecArchive } from '../openspec/cli.js';
 import { existsSync } from 'node:fs';
@@ -107,6 +107,11 @@ async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Prom
 
   if (!(await isGitRepo(repoRoot))) {
     throw new Error('not a git repository; copperhead requires git for snapshots and rollback');
+  }
+  if (!(await hasCommits(repoRoot))) {
+    throw new Error(
+      'repository has no commits; copperhead requires at least one commit for snapshots and rollback — run "git add -A && git commit -m \'initial commit\'" first',
+    );
   }
   if ((await isDirty(repoRoot)) && !opts.allowDirty) {
     throw new Error('working tree is dirty; commit your changes or pass --allow-dirty (snapshots via git stash create)');

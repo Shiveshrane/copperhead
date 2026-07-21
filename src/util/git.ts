@@ -19,6 +19,16 @@ export async function isGitRepo(repo: string): Promise<boolean> {
   }
 }
 
+/** False on an unborn HEAD (fresh `git init` with no commits yet). */
+export async function hasCommits(repo: string): Promise<boolean> {
+  try {
+    await git(repo, ['rev-parse', '--quiet', '--verify', 'HEAD']);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function isDirty(repo: string): Promise<boolean> {
   const status = await git(repo, ['status', '--porcelain']);
   return status.length > 0;
