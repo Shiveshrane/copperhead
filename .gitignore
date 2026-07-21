@@ -6,5 +6,6 @@ dist/
 docs/.astro/
 docs/dist/
 demo-runs/
+manual-tests/runs/
 *.tgz
 .npmrc
