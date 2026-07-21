@@ -60,7 +60,15 @@ export async function restore(repo: string, snap: GitSnapshot): Promise<void> {
 export async function preserveFailedRun(repo: string, runId: string): Promise<string | null> {
   try {
     if (!(await isDirty(repo))) return null;
+    // Never leave the audit trail staged: a staged-but-not-in-HEAD path is
+    // deleted by restore()'s `reset --hard`, which silently defeats its
+    // `clean -e .copperhead/runs` protection (that flag only spares untracked
+    // files) — the in-flight run's transcript dir vanishes mid-run. Staging
+    // then unstaging (rather than an exclude pathspec) because `git add`
+    // errors outright when a pathspec touches gitignored paths, and runs/ is
+    // gitignored in some target repos but tracked in others.
     await git(repo, ['add', '-A']);
+    await git(repo, ['reset', '-q', '--', '.copperhead/runs']);
     const sha = await git(repo, ['stash', 'create']);
     if (!sha) return null;
     await git(repo, ['stash', 'store', '-m', `copperhead failed run ${runId}`, sha]);

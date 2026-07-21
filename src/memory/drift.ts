@@ -39,6 +39,13 @@ export async function checkDrift(repoRoot: string, docsDir: string, schematic: s
   const mismatches: DriftMismatch[] = [];
   const schPath = path.join(repoRoot, schematic);
   const symbols = await listSymbols(schPath);
+  // A schematic with zero symbols is the bootstrap state: during the create
+  // pipeline the docs legitimately lead the schematic (part-selection writes
+  // BOM.md before any symbol exists), so comparing against an empty sheet
+  // deadlocks every docs-touching stage — or worse, teaches the agent to strip
+  // refdes from BOM.md to appease the gate (#21). Same reasoning as the
+  // "no schematic configured" carve-out in the check_drift tool.
+  if (!symbols.length) return mismatches;
   const byRef = new Map<string, SchematicSymbol>(symbols.map((s) => [s.ref, s]));
 
   const bomPath = path.join(repoRoot, docsDir, 'BOM.md');

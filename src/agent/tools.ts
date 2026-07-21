@@ -1,9 +1,9 @@
 import path from 'node:path';
-import { writeFile, mkdir, appendFile } from 'node:fs/promises';
+import { writeFile, mkdir, appendFile, readFile } from 'node:fs/promises';
 import type { ToolSchema } from './types.js';
 import { toolReadFile, toolWriteFile, toolEditFile, toolSearch } from './filetools.js';
 import { resolveInRepo, isKicadFile } from '../util/paths.js';
-import { runErc, runDrc, exportSvg, exportFab } from '../kicad/cli.js';
+import { runErc, runDrc, exportSvg, exportFab, kicadLoadError } from '../kicad/cli.js';
 import { formatViolations, type CheckReport } from '../kicad/report.js';
 import { listSymbols, listNets } from '../kicad/sexp.js';
 import { checkDrift } from '../memory/drift.js';
@@ -245,6 +245,12 @@ export const TOOLS: ToolDef[] = [
     requiresUnlock: true,
     handler: async (ctx, args) => {
       const rel = str(args, 'path');
+      const abs = resolveInRepo(ctx.repoRoot, rel);
+      // Text edits can corrupt an s-expression file in ways the editor cannot
+      // see; a corrupted file then fails every later ERC/DRC with an opaque
+      // error. Validate loadability with KiCad itself and roll the edit back
+      // rather than letting the file drift unusable.
+      const before = isKicadFile(rel) ? await readFile(abs, 'utf8') : null;
       const res = await toolEditFile(
         ctx.repoRoot,
         rel,
@@ -252,6 +258,13 @@ export const TOOLS: ToolDef[] = [
         args.new_string as string,
         args.replace_all === true,
       );
+      if (before !== null) {
+        const loadErr = await kicadLoadError(abs);
+        if (loadErr) {
+          await writeFile(abs, before, 'utf8');
+          return `edit REVERTED: it would make ${rel} unloadable in KiCad. kicad-cli says:\n${loadErr}\nRe-read the surrounding file text and make a smaller, syntactically complete edit.`;
+        }
+      }
       markTouched(ctx, rel);
       return res;
     },

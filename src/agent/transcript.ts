@@ -39,6 +39,10 @@ export class Transcript {
 
   async event(type: string, data: unknown): Promise<void> {
     const line = redactSecrets(JSON.stringify({ ts: new Date().toISOString(), type, data }));
+    // The audit trail must survive anything that happens to the working tree
+    // mid-run (a rollback path once deleted this directory); losing an event
+    // is acceptable, crashing the run to report one is not.
+    await mkdir(this.dir, { recursive: true });
     await appendFile(this.jsonlPath, line + '\n', 'utf8');
   }
 
@@ -76,6 +80,7 @@ export class Transcript {
     }
     if (s.detail) lines.push('', '## Detail', '', s.detail);
     const out = path.join(this.dir, 'summary.md');
+    await mkdir(this.dir, { recursive: true });
     await writeFile(out, redactSecrets(lines.join('\n') + '\n'), 'utf8');
     return out;
   }
