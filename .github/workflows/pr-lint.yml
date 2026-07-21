@@ -1,0 +1,59 @@
+name: PR lint
+
+# Checks that a PR description still follows .github/pull_request_template.md:
+# the required sections and the invariant checklist must be present and non-empty.
+# It verifies presence, not truth. A reviewer (see the pr-review skill) still confirms
+# the content is honest and the ticked invariants actually hold.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  template:
+    runs-on: ubuntu-latest
+    # Drafts are works in progress; Dependabot does not use our template.
+    if: ${{ !github.event.pull_request.draft && github.event.pull_request.user.login != 'dependabot[bot]' }}
+    steps:
+      - name: Check PR description
+        env:
+          # Passed via env, never interpolated into the script, so a crafted body cannot inject shell.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          node <<'EOF'
+          const body = process.env.PR_BODY || "";
+          // Drop HTML comments so the template's placeholder guidance never counts as content.
+          const stripped = body.replace(/<!--[\s\S]*?-->/g, "");
+
+          // Bucket lines under their nearest "## Heading".
+          const sections = {};
+          let current = null;
+          for (const line of stripped.split(/\r?\n/)) {
+            const h = line.match(/^\s*##\s+(.+?)\s*$/);
+            if (h) { current = h[1].toLowerCase(); sections[current] = sections[current] || []; continue; }
+            if (current) sections[current].push(line);
+          }
+          const hasContent = (name) => {
+            const key = Object.keys(sections).find((k) => k.startsWith(name));
+            return key !== undefined && sections[key].some((l) => l.trim().length > 0);
+          };
+
+          const problems = [];
+          for (const req of ["what", "why", "testing"]) {
+            if (!hasContent(req)) problems.push(`Section "## ${req[0].toUpperCase() + req.slice(1)}" is missing or empty.`);
+          }
+          // The invariant checklist must survive (checkboxes may be unchecked or marked N/A).
+          if (!/^\s*-\s*\[[ xX]\]/m.test(stripped)) {
+            problems.push('The invariant checklist is missing (no "- [ ]" items found).');
+          }
+
+          if (problems.length) {
+            console.error("PR description does not follow the template:\n");
+            for (const p of problems) console.error("  - " + p);
+            console.error("\nSee .github/pull_request_template.md. Fill in the sections and keep the invariant checklist.");
+            process.exit(1);
+          }
+          console.log("PR description follows the template.");
+          EOF
