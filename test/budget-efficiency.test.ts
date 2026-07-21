@@ -497,3 +497,62 @@ describe('per-stage turn budgets (AC-15.18, AC-15.19)', () => {
     }
   });
 });
+
+describe('empty-completion tolerance (agent loop)', () => {
+  it('sporadic tool-less turns between productive ones do not fail the run', async () => {
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      await runInit({ repoRoot: repo, installHooks: false });
+      await execa('git', ['add', '-A'], { cwd: repo });
+      await execa('git', ['commit', '-q', '-m', 'docs'], { cwd: repo });
+      // Three empty completions spread across productive turns — observed
+      // live from a provider mid-run. Only consecutive stalls may fail.
+      const provider = scriptedProvider([
+        {},
+        { toolCalls: [readCall] },
+        {},
+        { toolCalls: [readCall] },
+        {},
+        { toolCalls: [{ name: 'finish', args: { outcome: 'done', summary: 'done' } }] },
+      ]);
+      const res = await runAgentLoop({
+        repoRoot: repo,
+        request: 'noop',
+        model: 'gpt-5',
+        provider,
+        maxTurns: 10,
+        log: () => {},
+      });
+      expect(res.outcome).toBe('success');
+      // each empty turn still got the continue-or-finish nudge
+      const nudged = provider.seen
+        .flat()
+        .filter((m) => m.role === 'user' && (m as { content: string }).content.includes('Continue using tools'));
+      expect(nudged.length).toBeGreaterThanOrEqual(3);
+    } finally {
+      await cleanup();
+    }
+  }, 60_000);
+
+  it('three consecutive tool-less turns still fail the run', async () => {
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      await runInit({ repoRoot: repo, installHooks: false });
+      await execa('git', ['add', '-A'], { cwd: repo });
+      await execa('git', ['commit', '-q', '-m', 'docs'], { cwd: repo });
+      const provider = scriptedProvider([{ toolCalls: [readCall] }, {}]);
+      const res = await runAgentLoop({
+        repoRoot: repo,
+        request: 'noop',
+        model: 'gpt-5',
+        provider,
+        maxTurns: 10,
+        log: () => {},
+      });
+      expect(res.outcome).toBe('failure');
+      expect(res.summary).toContain('stopped calling tools');
+    } finally {
+      await cleanup();
+    }
+  }, 60_000);
+});

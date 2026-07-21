@@ -288,6 +288,10 @@ async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Prom
     messages.push({ role: 'assistant', content: res.text, toolCalls: res.toolCalls });
 
     if (!res.toolCalls.length) {
+      // Only *consecutive* tool-less turns are a stall. Providers emit the
+      // occasional empty completion mid-run (observed live: three empties
+      // spread across 31 productive turns); a cumulative counter turns those
+      // into a full rollback of an otherwise-converging run.
       if (nudges++ >= 2) return fail('model stopped calling tools without finishing');
       messages.push({
         role: 'user',
@@ -295,6 +299,7 @@ async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Prom
       });
       continue;
     }
+    nudges = 0;
 
     for (const call of res.toolCalls) {
       const result = await dispatchTool(ctx, call.name, call.args);
