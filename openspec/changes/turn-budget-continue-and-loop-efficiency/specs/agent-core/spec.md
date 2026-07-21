@@ -1,0 +1,102 @@
+# agent-core delta spec
+
+## ADDED Requirements
+
+### Requirement: Continue prompt on turn-budget exhaustion
+
+When `maxTurns` is reached in an attended run, the loop SHALL invoke the budget-exhaustion callback with run statistics (turns used, files touched, open obligation count, and cumulative token usage in/out) and offer to continue with additional turns. If the callback grants extra turns, the loop SHALL extend the budget and continue the conversation without losing state; the callback MAY fire again at the next exhaustion. If the callback declines, is absent (non-interactive/CI), or stdin is not a TTY, the run SHALL fail exactly as before.
+
+#### Scenario: Attended run continues (AC-15.1)
+
+- **WHEN** a run reaches `maxTurns` and the budget-exhaustion callback returns a positive number of extra turns
+- **THEN** the loop continues from the same conversation state, a `budget-extended` event with the granted turns and token usage is written to the transcript, and the run can still finish with outcome success
+
+#### Scenario: Attended run declines (AC-15.2)
+
+- **WHEN** a run reaches `maxTurns` and the callback returns 0
+- **THEN** the run fails with the turn-budget-exhausted reason and the pre-run snapshot is restored, as today
+
+#### Scenario: Non-interactive run unchanged (AC-15.3)
+
+- **WHEN** a run reaches `maxTurns` and no budget-exhaustion callback was provided
+- **THEN** the run fails and restores exactly as before this change
+
+#### Scenario: Token usage visible at the decision point (AC-15.4)
+
+- **WHEN** the budget-exhaustion callback is invoked
+- **THEN** the statistics it receives include `tokensIn` and `tokensOut` matching what the summary would report
+
+### Requirement: Tool-call batching guidance
+
+The system prompt workflow SHALL instruct the model to emit multiple independent tool calls in a single response (all `record_constraint` calls together, all `resolve_affected` calls together, independent `write_file` calls together), and the 5-turns-remaining nudge SHALL repeat the batching instruction.
+
+#### Scenario: Batching stated in the system prompt (AC-15.5)
+
+- **WHEN** the system prompt is built
+- **THEN** it contains an explicit instruction to emit multiple independent tool calls in one response
+
+#### Scenario: Batching stated in the convergence nudge (AC-15.6)
+
+- **WHEN** 5 turns remain and no finish has been requested
+- **THEN** the injected nudge message includes the batching instruction
+
+### Requirement: Deferred revisit obligations for nonexistent artifacts
+
+`record_constraint` SHALL NOT open an `affects-revisit` obligation for an `affects` item that positively identifies an artifact that does not exist yet: schematic-ish items when no schematic is configured, board-ish items when no board is configured, doc-ish items whose file is absent. Such items SHALL be recorded as deferred, named in the tool result, and listed in the run summary; deferred items SHALL never block `finish`. Items that do not positively match a missing artifact SHALL open normal obligations.
+
+#### Scenario: Spec-seed constraint does not open dead obligations (AC-15.7)
+
+- **WHEN** `record_constraint` runs with `affects: ["schematic", "layout", "BOM.md"]` in a repo with no schematic, no board, and no `BOM.md`
+- **THEN** zero `affects-revisit` obligations open, all three items are reported as deferred in the tool result, and `finish` is not blocked by them
+
+#### Scenario: Existing artifacts still open obligations (AC-15.8)
+
+- **WHEN** `record_constraint` runs with `affects: ["schematic"]` in a repo with a configured schematic
+- **THEN** an `affects-revisit` obligation opens exactly as before
+
+### Requirement: Batch resolution of revisit obligations
+
+`resolve_affected` SHALL accept an optional `resolutions` array of `{constraint_key, item, resolution}` objects alongside the single form, resolve each entry independently, and report the outcome per entry so one invalid entry does not invalidate the rest.
+
+#### Scenario: One call clears a backlog (AC-15.9)
+
+- **WHEN** `resolve_affected` is called with a `resolutions` array covering three open obligations
+- **THEN** all three obligations clear in that single call and each resolution is recorded as a decision
+
+#### Scenario: Mixed valid and invalid entries (AC-15.10)
+
+- **WHEN** the `resolutions` array contains one matching and one non-matching entry
+- **THEN** the matching entry resolves, and the result names the non-matching entry with the currently open obligations to match against
+
+### Requirement: Convergence feedback in tool results
+
+Tool results SHALL steer the model toward convergence: `record_constraint` returns the running count of open obligations; `run_erc` and `run_drc` without a configured schematic/board state that the check is not applicable yet and should not be retried until the artifact exists; `search` rejects an empty pattern with a corrective hint instead of a generic missing-argument error.
+
+#### Scenario: Obligation debt is visible as it accumulates (AC-15.11)
+
+- **WHEN** `record_constraint` opens new obligations
+- **THEN** its return value includes the total number of currently open obligations
+
+#### Scenario: ERC not applicable is terminal, not retryable (AC-15.12)
+
+- **WHEN** `run_erc` is called with no schematic configured
+- **THEN** the result says ERC is not applicable yet (no schematic exists) rather than a bare "no schematic configured"
+
+#### Scenario: Empty search pattern is corrected (AC-15.13)
+
+- **WHEN** `search` is called with an empty `pattern`
+- **THEN** the result explains a non-empty regex is required and gives an example, without consuming further turns on retries of the same mistake
+
+### Requirement: Anthropic prompt caching
+
+The Anthropic provider SHALL send `cache_control: {type: "ephemeral"}` breakpoints on the system prompt block, the last tool definition, and the last content block of the final message, and SHALL include cache-read and cache-creation input tokens in the reported `inputTokens` usage.
+
+#### Scenario: Breakpoints present in the request (AC-15.14)
+
+- **WHEN** the Anthropic provider builds a request with a system prompt, tools, and messages
+- **THEN** the request carries exactly three cache-control breakpoints: system block, last tool, last message block
+
+#### Scenario: Cached tokens are counted (AC-15.15)
+
+- **WHEN** the API response reports `cache_read_input_tokens` or `cache_creation_input_tokens`
+- **THEN** the turn's `inputTokens` is the sum of uncached, cache-read, and cache-creation input tokens

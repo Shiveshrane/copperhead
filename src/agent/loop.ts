@@ -8,13 +8,22 @@ import { loadConstraints } from '../memory/constraints.js';
 import { loadConfig, type CopperheadConfig } from '../config.js';
 import { Transcript } from './transcript.js';
 import { ObligationsLedger } from './ledger.js';
-import { isDirty, isGitRepo, snapshot, restore, commitAll, changedFiles } from '../util/git.js';
+import { isDirty, isGitRepo, snapshot, restore, commitAll, changedFiles, preserveFailedRun } from '../util/git.js';
 import { withRetry, isRateLimit } from '../util/retry.js';
 import { openspecArchive } from '../openspec/cli.js';
 import { existsSync } from 'node:fs';
 import { OpenAIProvider } from './providers/openai.js';
 import { AnthropicProvider } from './providers/anthropic.js';
 import { openSynapMemory, type RunRecord, type SynapMemory } from '../memory/synap.js';
+
+/** What the user sees at the moment they decide whether to keep going. */
+export interface BudgetExhaustedStats {
+  turnsUsed: number;
+  tokensIn: number;
+  tokensOut: number;
+  filesTouched: string[];
+  openObligations: number;
+}
 
 export interface RunOptions {
   repoRoot: string;
@@ -25,8 +34,15 @@ export interface RunOptions {
   dryRun?: boolean;
   interactive?: boolean;
   confirm?: (q: string) => Promise<boolean>;
+  /**
+   * Called when the turn budget runs out. Returns the number of extra turns to
+   * grant (0 fails the run as before). Absent means non-interactive: fail.
+   */
+  onBudgetExhausted?: (stats: BudgetExhaustedStats) => Promise<number>;
   /** Extra prompt appended for pipeline stages (Mode A). */
   stagePrompt?: string;
+  /** Test seam: bypass makeProvider. */
+  provider?: Provider;
   log?: (line: string) => void;
 }
 
@@ -134,7 +150,7 @@ async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Prom
     finishRequest: null,
   };
 
-  let provider = makeProvider(opts.model);
+  let provider = opts.provider ?? makeProvider(opts.model);
   const constraints = await loadConstraints(repoRoot);
   const basePrompt = await buildSystemPrompt(repoRoot, config, constraints);
   // Cross-run memory is appended after the repo's own docs and constraints so
@@ -175,6 +191,8 @@ async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Prom
 
   const fail = async (reason: string): Promise<RunResult> => {
     await transcript.event('run-failed', { reason });
+    const preserved = await preserveFailedRun(repoRoot, ctx.runId);
+    if (preserved) await transcript.event('work-preserved', { stash: preserved });
     await restore(repoRoot, snap);
     const summaryPath = await transcript.writeSummary({
       request: opts.request,
@@ -188,10 +206,16 @@ async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Prom
       tokensOut,
       outcome: 'failure',
       openObligations: ctx.ledger.isClear ? null : ctx.ledger.describe(),
+      deferredObligations: ctx.ledger.describeDeferred(),
       detail: reason,
     });
     log(`run failed: ${reason}`);
     log(`working tree restored to pre-run snapshot`);
+    if (preserved) {
+      log(
+        `failed work preserved: git stash entry "copperhead failed run ${ctx.runId}" (${preserved.slice(0, 10)}); recover with \`git stash apply\`, discard with \`git stash drop\``,
+      );
+    }
     log(`transcript: ${transcript.jsonlPath}`);
     log(`summary: ${summaryPath}`);
     return {
@@ -203,7 +227,24 @@ async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Prom
     };
   };
 
-  for (let turn = 0; turn < maxTurns; turn++) {
+  let budget = maxTurns;
+  for (let turn = 0; ; turn++) {
+    if (turn >= budget) {
+      // Budget exhausted. In an attended run this is a user decision made with
+      // the cost visible, not an unconditional rollback (issue #15).
+      const stats: BudgetExhaustedStats = {
+        turnsUsed: turn,
+        tokensIn,
+        tokensOut,
+        filesTouched: [...ctx.filesTouched],
+        openObligations: ctx.ledger.openObligations.length,
+      };
+      const extra = opts.onBudgetExhausted ? Math.floor(await opts.onBudgetExhausted(stats)) : 0;
+      if (!Number.isFinite(extra) || extra <= 0) break;
+      budget += extra;
+      await transcript.event('budget-extended', { extraTurns: extra, budget, ...stats });
+      log(`turn budget extended by ${extra} (now ${budget})`);
+    }
     const tools = availableTools(ctx).map((t) => t.schema);
     let res: Turn;
     try {
@@ -253,12 +294,12 @@ async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Prom
       return fail(`repair cycles exhausted (${config.maxRepairCycles}); violations persist`);
     }
 
-    const remaining = maxTurns - turn - 1;
+    const remaining = budget - turn - 1;
     if (remaining === 5 && !ctx.finishRequest) {
       messages.push({
         role: 'user',
         content:
-          'Only 5 turns remain. Converge now: finish the minimal correct edit set, run run_erc (and run_drc if the board changed), run check_drift, then call finish.',
+          'Only 5 turns remain. Converge now: finish the minimal correct edit set, run run_erc (and run_drc if the board changed), run check_drift, then call finish. Batch independent tool calls in a single response (e.g. all resolve_affected calls at once) instead of one per turn.',
       });
     }
 
@@ -360,6 +401,7 @@ async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Prom
         tokensOut,
         outcome: 'success',
         openObligations: null,
+        deferredObligations: ctx.ledger.describeDeferred(),
       });
       await remember({
         request: opts.request,
@@ -376,5 +418,5 @@ async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Prom
   }
 
   const filesAfter = await changedFiles(repoRoot, snap.head);
-  return fail(`turn budget exhausted (${maxTurns} turns, ${filesAfter.length} files touched but unverified)`);
+  return fail(`turn budget exhausted (${budget} turns, ${filesAfter.length} files touched but unverified)`);
 }

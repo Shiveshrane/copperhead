@@ -50,6 +50,26 @@ export async function restore(repo: string, snap: GitSnapshot): Promise<void> {
   }
 }
 
+/**
+ * Preserve a failed run's work as a stash entry before rollback, so a failure
+ * is recoverable instead of destroyed. `git stash create` alone ignores
+ * untracked files (most of what a docs-stage run produces), so everything is
+ * staged first; restore() resets the index anyway. Never throws: preservation
+ * must not be able to block the rollback itself.
+ */
+export async function preserveFailedRun(repo: string, runId: string): Promise<string | null> {
+  try {
+    if (!(await isDirty(repo))) return null;
+    await git(repo, ['add', '-A']);
+    const sha = await git(repo, ['stash', 'create']);
+    if (!sha) return null;
+    await git(repo, ['stash', 'store', '-m', `copperhead failed run ${runId}`, sha]);
+    return sha;
+  } catch {
+    return null;
+  }
+}
+
 export async function commitAll(repo: string, message: string): Promise<string> {
   await git(repo, ['add', '-A']);
   await git(repo, ['commit', '-m', message]);

@@ -14,6 +14,7 @@ export interface RunSummaryData {
   tokensOut: number;
   outcome: 'success' | 'failure' | 'aborted';
   openObligations: string | null;
+  deferredObligations?: string | null;
   detail?: string;
 }
 
@@ -69,6 +70,9 @@ export class Transcript {
     ];
     if (s.openObligations) {
       lines.push('', '## Open sync obligations (unmet at run end)', '', s.openObligations);
+    }
+    if (s.deferredObligations) {
+      lines.push('', '## Deferred revisit obligations (target artifact did not exist yet)', '', s.deferredObligations);
     }
     if (s.detail) lines.push('', '## Detail', '', s.detail);
     const out = path.join(this.dir, 'summary.md');

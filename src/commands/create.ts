@@ -2,7 +2,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { loadConfig } from '../config.js';
-import { runAgentLoop } from '../agent/loop.js';
+import { runAgentLoop, type BudgetExhaustedStats } from '../agent/loop.js';
 import { openspecInit } from '../openspec/cli.js';
 import { runCheck } from './check.js';
 
@@ -87,6 +87,8 @@ export interface CreateOptions {
   briefPath: string;
   model: string;
   interactive?: boolean;
+  /** Forwarded to each stage's run (attended continue-on-exhaustion prompt). */
+  onBudgetExhausted?: (stats: BudgetExhaustedStats) => Promise<number>;
   log: (s: string) => void;
 }
 
@@ -103,6 +105,7 @@ export async function runCreate(opts: CreateOptions): Promise<{ ok: boolean; com
       continue;
     }
     opts.log(`stage ${stage.name}: running`);
+    const stageTurns = config.stageMaxTurns?.[stage.name];
     const res = await runAgentLoop({
       repoRoot: opts.repoRoot,
       model: opts.model,
@@ -110,6 +113,8 @@ export async function runCreate(opts: CreateOptions): Promise<{ ok: boolean; com
       stagePrompt: stage.prompt(brief),
       interactive: opts.interactive ?? false,
       allowDirty: true, // stages build on each other's uncommitted state within the pipeline
+      ...(stageTurns !== undefined ? { maxTurns: stageTurns } : {}),
+      ...(opts.onBudgetExhausted ? { onBudgetExhausted: opts.onBudgetExhausted } : {}),
       log: opts.log,
     });
     if (res.outcome !== 'success') {

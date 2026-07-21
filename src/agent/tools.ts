@@ -52,6 +52,35 @@ const str = (args: Record<string, unknown>, key: string): string => {
   return v;
 };
 
+/**
+ * Why an `affects` item's target artifact does not exist yet, or null when it
+ * exists or the item cannot be positively classified (issue #15: obligations
+ * for artifacts that do not exist yet drain the turn budget on no-op
+ * resolutions). Only positive matches defer; ambiguous items (refdes, nets,
+ * free text) always open real obligations.
+ */
+const KNOWN_DOCS = ['BOM', 'PINOUT', 'SPEC', 'SUBSYSTEMS', 'LAYOUT', 'DEVPLAN', 'DECISIONS', 'CHANGELOG'];
+
+function missingArtifactReason(ctx: RunContext, item: string): string | null {
+  const l = item.toLowerCase();
+  if (/\.kicad_sch\b/.test(l) || /\bschematic\b/.test(l)) {
+    return ctx.config.schematic ? null : 'no schematic configured yet';
+  }
+  if (/\.kicad_pcb\b/.test(l) || /\b(layout|board|pcb)\b/.test(l)) {
+    return ctx.config.board ? null : 'no board configured yet';
+  }
+  const md = /^([\w-]+)\.md$/i.exec(item.trim());
+  const docName = md ? md[1]! : KNOWN_DOCS.find((d) => item.trim().toUpperCase() === d);
+  if (docName) {
+    const candidates = [
+      path.join(ctx.repoRoot, ctx.config.docs, `${docName}.md`),
+      path.join(ctx.repoRoot, `${docName}.md`),
+    ];
+    return candidates.some((p) => existsSync(p)) ? null : `${docName}.md does not exist yet`;
+  }
+  return null;
+}
+
 function markTouched(ctx: RunContext, rel: string): void {
   ctx.filesTouched.add(rel);
   if (isKicadFile(rel)) {
@@ -99,6 +128,9 @@ export const TOOLS: ToolDef[] = [
     },
     requiresUnlock: false,
     handler: async (ctx, args) => {
+      if (typeof args.pattern !== 'string' || args.pattern.trim() === '') {
+        return 'error: search requires a non-empty regex pattern, e.g. {"pattern": "KEY_DAH", "glob": "**/*.kicad_sch"}. To browse a file, use read_file instead.';
+      }
       const matches = await toolSearch(ctx.repoRoot, str(args, 'pattern'), args.glob as string | undefined);
       if (!matches.length) return 'no matches';
       return matches.map((m) => `${m.file}:${m.line}: ${m.text}`).join('\n');
@@ -250,7 +282,9 @@ export const TOOLS: ToolDef[] = [
     },
     requiresUnlock: false,
     handler: async (ctx) => {
-      if (!ctx.config.schematic) return 'no schematic configured';
+      if (!ctx.config.schematic) {
+        return 'no schematic configured yet; ERC is not applicable at this stage. Do not retry until a schematic exists and is configured.';
+      }
       const report = await runErc(path.join(ctx.repoRoot, ctx.config.schematic));
       ctx.lastErc = report;
       if (report.ok) ctx.ledger.clear('erc');
@@ -266,7 +300,9 @@ export const TOOLS: ToolDef[] = [
     },
     requiresUnlock: false,
     handler: async (ctx) => {
-      if (!ctx.config.board) return 'no board configured';
+      if (!ctx.config.board) {
+        return 'no board configured yet; DRC is not applicable at this stage. Do not retry until a board exists and is configured.';
+      }
       const report = await runDrc(path.join(ctx.repoRoot, ctx.config.board));
       ctx.lastDrc = report;
       if (report.ok) ctx.ledger.clear('drc');
@@ -374,42 +410,91 @@ export const TOOLS: ToolDef[] = [
         source: str(args, 'source'),
         affects,
       });
-      ctx.ledger.onConstraintChange(key, affects);
+      // The registry keeps the full affects[] either way; obligations only open
+      // for artifacts that exist now, the rest are deferred (issue #15).
+      const opened: string[] = [];
+      const deferred: string[] = [];
+      for (const item of affects) {
+        const missing = missingArtifactReason(ctx, item);
+        if (missing) {
+          ctx.ledger.defer('affects-revisit', `${key} affects ${item}`, key);
+          deferred.push(`${item} (${missing})`);
+        } else {
+          opened.push(item);
+        }
+      }
+      ctx.ledger.onConstraintChange(key, opened);
       ctx.ledger.clear('constraint-dual-write', key);
-      return `constraint ${key} recorded; revisit obligations opened for: ${affects.join(', ') || '(none)'}`;
+      const parts = [`constraint ${key} recorded`, `revisit obligations opened for: ${opened.join(', ') || '(none)'}`];
+      if (deferred.length) parts.push(`deferred until the artifact exists: ${deferred.join(', ')}`);
+      parts.push(`open obligations now: ${ctx.ledger.openObligations.length}`);
+      return parts.join('; ');
     },
   },
   {
     schema: {
       name: 'resolve_affected',
       description:
-        'Explicitly resolve an affects-revisit obligation: state whether the affected item changed or why no change is needed.',
+        'Explicitly resolve affects-revisit obligations: state whether each affected item changed or why no change is needed. Pass resolutions[] to clear many in one call, or the single constraint_key/item/resolution form.',
       parameters: {
         type: 'object',
         properties: {
           constraint_key: { type: 'string' },
           item: { type: 'string' },
           resolution: { type: 'string', description: '"changed: ..." or "no change needed: <reason>"' },
+          resolutions: {
+            type: 'array',
+            description: 'batch form: resolve many obligations in one call',
+            items: {
+              type: 'object',
+              properties: {
+                constraint_key: { type: 'string' },
+                item: { type: 'string' },
+                resolution: { type: 'string' },
+              },
+              required: ['constraint_key', 'item', 'resolution'],
+            },
+          },
         },
-        required: ['constraint_key', 'item', 'resolution'],
+        required: [],
       },
     },
     requiresUnlock: true,
     handler: async (ctx, args) => {
-      const detail = `${str(args, 'constraint_key')} affects ${str(args, 'item')}`;
       // An item that matches nothing must not read as success: the model would
       // move on believing the obligation closed, and only find out at finish.
-      if (!ctx.ledger.clear('affects-revisit', detail)) {
-        const open = ctx.ledger.openOfKind('affects-revisit');
-        if (!open.length) return `error: no open affects-revisit obligation matches "${detail}"`;
-        return [
-          `error: no open affects-revisit obligation matches "${detail}".`,
-          'Resolve one item per call, matching these exactly:',
-          ...open.map((o) => `  - ${o.detail}`),
-        ].join('\n');
+      const resolveOne = (constraintKey: string, item: string, resolution: string): string => {
+        const detail = `${constraintKey} affects ${item}`;
+        if (!ctx.ledger.clear('affects-revisit', detail)) {
+          const open = ctx.ledger.openOfKind('affects-revisit');
+          if (!open.length) return `error: no open affects-revisit obligation matches "${detail}"`;
+          return [
+            `error: no open affects-revisit obligation matches "${detail}".`,
+            'Match these exactly:',
+            ...open.map((o) => `  - ${o.detail}`),
+          ].join('\n');
+        }
+        ctx.decisions.push(`[affects] ${detail}: ${resolution}`);
+        return `resolved: ${detail}`;
+      };
+
+      const batch = args.resolutions;
+      if (Array.isArray(batch) && batch.length) {
+        // Entries resolve independently: one bad key must not waste the call.
+        return batch
+          .map((entry, i) => {
+            const e = entry as Record<string, unknown>;
+            if (typeof e?.constraint_key !== 'string' || typeof e?.item !== 'string' || typeof e?.resolution !== 'string') {
+              return `error: resolutions[${i}] needs string constraint_key, item, and resolution`;
+            }
+            return resolveOne(e.constraint_key, e.item, e.resolution);
+          })
+          .join('\n');
       }
-      ctx.decisions.push(`[affects] ${detail}: ${str(args, 'resolution')}`);
-      return `resolved: ${detail}`;
+      if (typeof args.constraint_key === 'string' && typeof args.item === 'string' && typeof args.resolution === 'string') {
+        return resolveOne(args.constraint_key, args.item, args.resolution);
+      }
+      return 'error: pass either resolutions: [{constraint_key, item, resolution}, ...] or the single form constraint_key + item + resolution';
     },
   },
   {

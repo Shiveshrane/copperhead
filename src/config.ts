@@ -8,6 +8,8 @@ export interface CopperheadConfig {
   docs: string;
   model: string | null;
   maxTurns: number;
+  /** Per-stage overrides for the create pipeline, keyed by stage name. */
+  stageMaxTurns?: Record<string, number>;
   maxRepairCycles: number;
   budgets: Record<string, number>;
   /** Content hashes of generated docs, for init idempotency (AC-1.4). */
@@ -40,6 +42,7 @@ export async function loadConfig(repoRoot: string): Promise<CopperheadConfig> {
     docs: raw.docs ?? DEFAULTS.docs,
     model: raw.model ?? null,
     maxTurns: raw.maxTurns ?? DEFAULTS.maxTurns,
+    ...(raw.stageMaxTurns ? { stageMaxTurns: raw.stageMaxTurns } : {}),
     maxRepairCycles: raw.maxRepairCycles ?? DEFAULTS.maxRepairCycles,
     budgets: raw.budgets ?? {},
     ...(raw.generatedHashes ? { generatedHashes: raw.generatedHashes } : {}),

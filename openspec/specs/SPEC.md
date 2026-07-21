@@ -336,8 +336,10 @@ interface Provider {
 ### 4.5 Budgets & failure modes
 
 - `maxTurns` default 40; `maxRepairCycles` 5; per-run token budget logged
-- On any unrecoverable failure: `git checkout` the snapshot, print the transcript path, exit 1
+- On turn-budget exhaustion in an attended (TTY) run: print run stats (turns, files touched, open obligations, token usage) and ask whether to continue with more turns; declining, or a non-TTY run, fails as below. The extension can repeat; each is a fresh decision with fresh numbers.
+- On any unrecoverable failure: preserve the touched work as a git stash entry named `copperhead failed run <run-id>`, restore the snapshot, print the stash ref and transcript path, exit 1
 - Rate-limit (429): exponential backoff ×3, then fail over to the other provider if a key exists
+- The Anthropic provider marks `cache_control` breakpoints (system prompt, last tool, last message block) so the resent conversation prefix is cached; reported input tokens include cache reads/writes
 
 ---
 
@@ -350,11 +352,12 @@ interface Provider {
   "docs": "docs/",
   "model": "gpt-5",
   "maxTurns": 40,
+  "stageMaxTurns": { "spec-seed": 60 },
   "budgets": { "sleep_current_uA": 25 }
 }
 ```
 
-`budgets` is free-form; keys are surfaced verbatim into the system prompt so the agent treats them as hard constraints.
+`budgets` is free-form; keys are surfaced verbatim into the system prompt so the agent treats them as hard constraints. `stageMaxTurns` is optional: per-stage turn budgets for the create pipeline, keyed by stage name; stages without an entry use `maxTurns`.
 
 ---
 
@@ -433,6 +436,20 @@ Format: Given / When / Then. "Fixture" = the open-telegraph repo (or the tiny te
 - **AC-7.3 (never resolve a violation silently)** With an inconsistency that reflects a requirement violation (e.g. a part whose leakage breaks the sleep-current budget), `sync` does **not** rewrite either side to agree; it flags the violation with both sides and the governing spec/budget, and exits non-zero.
 - **AC-7.4 (dry run)** `sync --dry-run` prints every detected inconsistency (doc, claim, actual, proposed resolution) and writes nothing (`git status` unchanged).
 - **AC-7.5 (clean and idempotent)** On a consistent repo, `sync` exits 0 with "no inconsistencies", makes no edits and no commit; running `sync` twice in a row makes the second run a no-op.
+
+### AC-15 · Turn-budget continue & loop efficiency (issue #15)
+
+- **AC-15.1 (continue)** When `maxTurns` is reached in an attended run, granting extra turns continues the conversation from the same state, records a `budget-extended` transcript event, and the run can still succeed.
+- **AC-15.2 (decline)** Declining at the prompt fails and restores the snapshot exactly as before.
+- **AC-15.3 (non-interactive unchanged)** With no callback (CI, pipes), exhaustion fails and restores exactly as before.
+- **AC-15.4 (cost visible)** The decision point shows turns used, files touched, open obligations, and cumulative tokens in/out.
+- **AC-15.5 / AC-15.6 (batching guidance)** The system prompt workflow and the 5-turns-remaining nudge both instruct emitting multiple independent tool calls per response.
+- **AC-15.7 / AC-15.8 (deferral)** `record_constraint` defers, rather than opens, `affects-revisit` obligations whose target artifact does not exist yet (no schematic/board configured, doc absent); deferred items never block `finish` and are named in the tool result and run summary. Existing artifacts still open obligations as before.
+- **AC-15.9 / AC-15.10 (batch resolution)** `resolve_affected` accepts `resolutions: [...]`; entries resolve independently with per-entry results.
+- **AC-15.11 – AC-15.13 (convergence feedback)** `record_constraint` returns the running open-obligation count; `run_erc`/`run_drc` without a configured artifact read as not-applicable-yet; `search` rejects an empty pattern with a corrective hint.
+- **AC-15.14 / AC-15.15 (prompt caching)** The Anthropic provider sends three `cache_control` breakpoints (system, last tool, last message block) and counts cache-read/creation tokens in reported input usage.
+- **AC-15.16 / AC-15.17 (work preservation)** Any run failure with touched files leaves a `copperhead failed run <run-id>` stash entry holding the work while the tree is restored byte-identical; a clean failure leaves no stash.
+- **AC-15.18 / AC-15.19 (per-stage budgets)** `stageMaxTurns` in config overrides `maxTurns` for named create-pipeline stages; absent entries change nothing.
 
 ### AC-5 · Viewer (Phase 2 — only if built)
 
