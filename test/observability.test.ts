@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mkdir, readFile, writeFile, chmod } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, chmod, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { execa } from 'execa';
 import { runAgentLoop, type RunOptions } from '../src/agent/loop.js';
@@ -160,6 +160,36 @@ describe('exit paths and run-end addenda (task 4.6)', () => {
       // rolled back per the snapshot contract
       const { stdout: status } = await execa('git', ['status', '--porcelain'], { cwd: repo });
       expect(status).toBe('');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('a failed rollback still writes run-end and summary.md, not an unhandled throw', async () => {
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      const lines: string[] = [];
+      // The provider call breaks the repo (deletes .git) then errors, so the
+      // failure path's restore() throws too: fail() must survive it and still
+      // land the summary — it matters most when the tree is in an unknown state.
+      const provider: Provider = {
+        name: 'scripted',
+        chat: async () => {
+          await rm(path.join(repo, '.git'), { recursive: true, force: true });
+          throw new Error('provider exploded');
+        },
+      };
+      const res = await runAgentLoop(loopOpts(repo, provider, lines, { maxTurns: 2 }));
+      expect(res.outcome).toBe('failure');
+      expect(res.exitPath).toBe('provider-error');
+
+      const events = await transcriptEvents(res.transcriptDir);
+      expect(events.some((e) => e.type === 'restore-failed')).toBe(true);
+      expect(events.some((e) => e.type === 'run-end')).toBe(true);
+
+      const summary = await readFile(path.join(res.transcriptDir, 'summary.md'), 'utf8');
+      expect(summary).toContain('ROLLBACK FAILED');
+      expect(lines.join('\n')).toContain('rollback failed');
     } finally {
       await cleanup();
     }

@@ -243,7 +243,16 @@ async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Prom
 
   const fail = async (reason: string, exitPath: ExitPath): Promise<RunResult> => {
     await transcript.event('run-failed', { reason, exitPath });
-    await restore(repoRoot, snap);
+    // The rollback itself can fail (git in a bad state). That must not become
+    // an unhandled throw that skips run-end and summary.md — the summary is
+    // most valuable exactly when the tree is left in an unknown state.
+    let restoreError: string | null = null;
+    try {
+      await restore(repoRoot, snap);
+    } catch (err) {
+      restoreError = (err as Error).message;
+      await transcript.event('restore-failed', { error: restoreError });
+    }
     const runStats = stats(exitPath);
     await transcript.event('run-end', runStats);
     const summaryPath = await transcript.writeSummary({
@@ -258,12 +267,16 @@ async function runWithMemory(opts: RunOptions, memory: SynapMemory | null): Prom
       tokensOut,
       outcome: 'failure',
       openObligations: ctx.ledger.isClear ? null : ctx.ledger.describe(),
-      detail: reason,
+      detail: restoreError ? `${reason}\n\nROLLBACK FAILED: ${restoreError} — the working tree may be in a partial state; inspect it with git status/git diff before rerunning` : reason,
       env: meta,
       stats: runStats,
     });
     log(`run failed: ${reason}`);
-    log(`working tree restored to pre-run snapshot`);
+    if (restoreError) {
+      log(`WARNING: rollback failed (${restoreError}); the working tree may be in a partial state`);
+    } else {
+      log(`working tree restored to pre-run snapshot`);
+    }
     log(`transcript: ${transcript.jsonlPath}`);
     log(`summary: ${summaryPath}`);
     r.finish(outcomeLine(runStats));
