@@ -32,6 +32,8 @@ export class OpenAIProvider implements Provider {
                       id: t.id,
                       type: 'function' as const,
                       function: { name: t.name, arguments: JSON.stringify(t.args) },
+                      // Preserve vendor-specific tool-call fields (e.g. Gemini thought signatures).
+                      // Dropping them makes the next turn's request 400.
                       ...(t.extra || {}),
                     })),
                   }
@@ -51,6 +53,9 @@ export class OpenAIProvider implements Provider {
         : {}),
     });
     const choice = res.choices[0];
+    // Capture any non-standard properties returned by the API (e.g. Gemini thought
+    // signatures) so they can be echoed back on subsequent turns. Dropping them
+    // causes reasoning-model backends to reject the follow-up request with 400.
     const toolCalls = ((choice?.message.tool_calls ?? []) as unknown as Record<string, unknown>[]).map((t: Record<string, unknown>) => {
       const extra: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(t)) {
