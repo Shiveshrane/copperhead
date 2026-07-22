@@ -37,6 +37,7 @@ export class OpenAIProvider implements Provider {
                       id: t.id,
                       type: 'function' as const,
                       function: { name: t.name, arguments: JSON.stringify(t.args) },
+                      ...(t.extra || {}),
                     })),
                   }
                 : {}),
@@ -55,11 +56,20 @@ export class OpenAIProvider implements Provider {
         : {}),
     });
     const choice = res.choices[0];
-    const toolCalls = ((choice?.message.tool_calls ?? []) as OpenAIToolCall[]).map((t) => ({
-      id: t.id,
-      name: t.function.name,
-      args: safeParse(t.function.arguments),
-    }));
+    const toolCalls = ((choice?.message.tool_calls ?? []) as any[]).map((t) => {
+      const extra: Record<string, any> = {};
+      for (const [k, v] of Object.entries(t)) {
+        if (k !== 'id' && k !== 'type' && k !== 'function') {
+          extra[k] = v;
+        }
+      }
+      return {
+        id: t.id,
+        name: t.function.name,
+        args: safeParse(t.function.arguments),
+        ...(Object.keys(extra).length ? { extra } : {}),
+      };
+    });
     return {
       text: choice?.message.content ?? null,
       toolCalls,
