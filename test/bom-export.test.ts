@@ -152,6 +152,23 @@ describe('exclusion rules (supplier-bom-export)', () => {
     expect(res.included.map((r) => r.refdes)).toEqual(['R1']);
     expect(res.warnings.join('\n')).toMatch(/no LCSC part #.*R1/);
   });
+
+  it('JLCPCB warns that --boards/--spares are ignored when set to a non-default', () => {
+    const boardsSet = buildExport(rows, 'jlcpcb', { boards: 25, spares: 10, includeUnverified: false });
+    expect(boardsSet.warnings.join('\n')).toMatch(/--boards\/--spares are ignored for jlcpcb/);
+    const sparesSet = buildExport(rows, 'jlcpcb', { boards: 1, spares: 15, includeUnverified: false });
+    expect(sparesSet.warnings.join('\n')).toMatch(/--boards\/--spares are ignored for jlcpcb/);
+  });
+
+  it('JLCPCB does not warn about quantity flags at their defaults', () => {
+    const res = buildExport(rows, 'jlcpcb', { boards: 1, spares: 10, includeUnverified: false });
+    expect(res.warnings.join('\n')).not.toMatch(/ignored for jlcpcb/);
+  });
+
+  it('cart suppliers never emit the jlcpcb quantity-flags note', () => {
+    const res = buildExport(rows, 'digikey', { boards: 25, spares: 15, includeUnverified: false });
+    expect(res.warnings.join('\n')).not.toMatch(/ignored for jlcpcb/);
+  });
 });
 
 describe('flag validation (cli-surface)', () => {

@@ -15,6 +15,7 @@ import {
   parseSpares,
   ExportError,
 } from './commands/export.js';
+import { DEFAULT_BOARDS, DEFAULT_SPARES } from './kicad/bom-export.js';
 import { runAgentLoop, type BudgetExhaustedStats } from './agent/loop.js';
 import { makeRenderer } from './agent/render.js';
 import { kicadCliVersion } from './kicad/cli.js';
@@ -236,8 +237,8 @@ exportCmd
   .command('bom')
   .description('write a supplier-format BOM (jlcpcb | digikey | mouser) from docs/BOM.md')
   .requiredOption('--supplier <name>', 'jlcpcb | digikey | mouser')
-  .option('--boards <n>', 'number of boards to order', '1')
-  .option('--spares <percent>', 'spare parts percentage', '10')
+  .option('--boards <n>', 'number of boards to order', String(DEFAULT_BOARDS))
+  .option('--spares <percent>', 'spare parts percentage', String(DEFAULT_SPARES))
   .option('--include-unverified', 'include UNVERIFIED rows that carry an MPN (never MPN-less rows)')
   .action(async (opts: { supplier: string; boards: string; spares: string; includeUnverified?: boolean }) => {
     const repo = repoOf(program.opts());

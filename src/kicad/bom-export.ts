@@ -12,6 +12,11 @@ export type Supplier = 'jlcpcb' | 'digikey' | 'mouser';
 
 export const SUPPLIERS: readonly Supplier[] = ['jlcpcb', 'digikey', 'mouser'];
 
+/** CLI defaults for the quantity flags, shared so the "ignored for jlcpcb"
+ *  note fires only when the user actually set a non-default value. */
+export const DEFAULT_BOARDS = 1;
+export const DEFAULT_SPARES = 10;
+
 export function isSupplier(s: string): s is Supplier {
   return (SUPPLIERS as readonly string[]).includes(s);
 }
@@ -70,6 +75,12 @@ const UNVERIFIED_RE = /\bUNVERIFIED\b/i;
  * Parse BOM.md into rows by column header, tolerating extra/reordered columns.
  * Only the header row and data rows of the first parts table are used; a table
  * without a recognizable Refdes header yields no rows.
+ *
+ * NOTE: the drift gate this exporter runs behind (checkDrift in
+ * ../memory/drift.ts) reads Refdes|Value|Footprint *by position*, not by header.
+ * So while this parser tolerates reordering those base columns, reordering them
+ * makes checkDrift compare the wrong cells and the export refuses with a bogus
+ * drift message. Keep the base three columns first and in order; only append.
  */
 export function parseBom(md: string): BomRow[] {
   const tableRows = parseMarkdownTables(md);
@@ -230,8 +241,9 @@ function buildWarnings(
   supplier: Supplier,
   included: BomRow[],
   excluded: ExportResult['excluded'],
-  includeUnverified: boolean,
+  opts: ExportOptions,
 ): string[] {
+  const { includeUnverified } = opts;
   const warnings: string[] = [];
   for (const { row, reason } of excluded) {
     const hint =
@@ -248,6 +260,15 @@ function buildWarnings(
     }
   }
   if (supplier === 'jlcpcb') {
+    // The JLCPCB assembly format has no quantity column — quantity is set from
+    // the board count entered at upload — so --boards/--spares never reach this
+    // file. Say so when the user supplied a non-default value, or they may order
+    // the wrong count expecting the flags to have taken effect.
+    if (opts.boards !== DEFAULT_BOARDS || opts.spares !== DEFAULT_SPARES) {
+      warnings.push(
+        'NOTE: --boards/--spares are ignored for jlcpcb — quantity is set from the board count you enter at JLCPCB upload',
+      );
+    }
     const blank = included.filter((r) => !r.lcsc).map((r) => r.refdes);
     if (blank.length) {
       warnings.push(
@@ -296,5 +317,5 @@ export function buildExport(rows: BomRow[], supplier: Supplier, opts: ExportOpti
   else if (supplier === 'digikey') csv = emitCart(lines, opts, 'Manufacturer Part Number');
   else csv = emitCart(lines, opts, 'Mfr. Part Number');
 
-  return { csv, included, excluded, warnings: buildWarnings(supplier, included, excluded, opts.includeUnverified) };
+  return { csv, included, excluded, warnings: buildWarnings(supplier, included, excluded, opts) };
 }
