@@ -304,10 +304,40 @@ try {
 }
 
 describe('ClaudeCodeProvider — missing optional dependency', () => {
+  // Integration-level: only runs when the SDK is genuinely absent (e.g. an
+  // `--omit=optional` install). Since the SDK is now a declared optional
+  // dependency it is usually present, so this self-skips; the deterministic
+  // cases below cover the same branch via an injected importer regardless.
   it.skipIf(sdkInstalled)('fails with an actionable install message when the SDK is absent', async () => {
     const provider = new ClaudeCodeProvider(); // no injected query -> real lazy import
     const caught = await provider.chat(messages, tools).catch((e: Error) => e);
     expect(caught.message).toContain('@anthropic-ai/claude-agent-sdk');
     expect(caught.message.toLowerCase()).toContain('install');
+  });
+
+  const moduleNotFound = () =>
+    Promise.reject(Object.assign(new Error("Cannot find module '@anthropic-ai/claude-agent-sdk'"), {
+      code: 'ERR_MODULE_NOT_FOUND',
+    }));
+
+  it('maps a module-not-found import to an actionable, non-retryable install message (SDK-agnostic)', async () => {
+    const provider = new ClaudeCodeProvider(undefined, undefined, moduleNotFound);
+    const caught = await provider.chat(messages, tools).catch((e: Error) => e);
+    expect(caught.message).toContain('@anthropic-ai/claude-agent-sdk');
+    expect(caught.message.toLowerCase()).toContain('install');
+    expect(isRateLimit(caught)).toBe(false);
+  });
+
+  it('re-throws a non-module import error unchanged (a present-but-broken install is not mislabeled)', async () => {
+    const broken = Object.assign(new Error('boom: bad build'), { code: 'ERR_DLOPEN_FAILED' });
+    const provider = new ClaudeCodeProvider(undefined, undefined, () => Promise.reject(broken));
+    const caught = await provider.chat(messages, tools).catch((e: Error) => e);
+    expect(caught).toBe(broken); // the real error propagates, not the "install it" message
+  });
+
+  it('errors when the SDK resolves but does not export query (incompatible version)', async () => {
+    const provider = new ClaudeCodeProvider(undefined, undefined, () => Promise.resolve({}));
+    const caught = await provider.chat(messages, tools).catch((e: Error) => e);
+    expect(caught.message).toContain('did not export `query`');
   });
 });

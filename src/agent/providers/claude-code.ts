@@ -64,6 +64,12 @@ export interface QueryMessage {
 }
 export type QueryLike = (args: QueryArgs) => AsyncIterable<QueryMessage>;
 
+/** Injectable dynamic import of the optional SDK. Exists so the
+ * missing-dependency path stays testable now that the SDK is a declared
+ * optional dependency (installed in a normal/CI install). The default keeps the
+ * specifier non-literal so tsc never resolves the optional dep at build time. */
+export type ImportLike = (specifier: string) => Promise<unknown>;
+
 /** Explicit deny list, belt-and-suspenders on top of the empty `tools` allowlist.
  * `'*'` is the documented wildcard; the named entries stay for clarity and in
  * case a given SDK build does not honor the wildcard. */
@@ -91,6 +97,7 @@ export class ClaudeCodeProvider implements Provider {
   constructor(
     private readonly model?: string,
     private readonly injectedQuery?: QueryLike,
+    private readonly importSdk: ImportLike = (specifier) => import(specifier),
   ) {}
 
   // `_opts.maxTokens` is intentionally ignored: the Agent SDK drives the Claude
@@ -201,10 +208,12 @@ export class ClaudeCodeProvider implements Provider {
     if (this.injectedQuery) return this.injectedQuery;
     let mod: { query?: QueryLike; default?: { query?: QueryLike } };
     try {
-      // Non-literal specifier keeps tsc from resolving the optional dependency
-      // at build time, so the package may legitimately be absent (D3).
-      const specifier = '@anthropic-ai/claude-agent-sdk';
-      mod = (await import(specifier)) as { query?: QueryLike; default?: { query?: QueryLike } };
+      // importSdk defaults to a non-literal `import()`, so tsc never resolves the
+      // optional dependency at build time and it may legitimately be absent (D3).
+      mod = (await this.importSdk('@anthropic-ai/claude-agent-sdk')) as {
+        query?: QueryLike;
+        default?: { query?: QueryLike };
+      };
     } catch (err) {
       // Only a genuinely-absent module gets the "install it" message; a present
       // but broken install surfaces its real error rather than being mislabeled.
