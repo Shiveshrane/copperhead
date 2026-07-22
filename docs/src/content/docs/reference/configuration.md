@@ -104,7 +104,7 @@ Accepted model values (routing is by prefix, matched top to bottom):
 
 One-time setup:
 
-1. Install the SDK yourself: `npm i @anthropic-ai/claude-agent-sdk`. It is deliberately not a declared copperhead dependency, because it peer-requires a newer `@anthropic-ai/sdk` than copperhead pins, so bundling it would break `npm install` for everyone; you may need `--legacy-peer-deps`. copperhead lazy-loads it and errors actionably if it is absent.
+1. The Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) ships as an optional dependency of copperhead, so a normal install includes it and no separate step is needed. If you installed with `--omit=optional` and it is missing, copperhead loads it lazily and errors actionably, telling you to add it with `npm i @anthropic-ai/claude-agent-sdk`.
 2. Be logged into Claude Code, then run `claude setup-token` and export the result as `CLAUDE_CODE_OAUTH_TOKEN` (use `--model claude-code:<id>` to pick a specific model).
 
 Authentication stays entirely with the CLI: copperhead never reads, copies, or logs the credential. A missing dependency or an unauthenticated install fails with an actionable message and leaves your tree untouched, and a rate-limited `claude-code` run never silently falls back to a billed API provider.

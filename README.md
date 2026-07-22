@@ -102,13 +102,12 @@ Global flags: `--repo <path>` (default: cwd) and `--json` for machine-readable o
 `--model claude-code` drives Claude Code through the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk) and reuses your saved login (the `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`), so a Claude subscription runs copperhead with **no `ANTHROPIC_API_KEY`**. Claude Code is used purely as a reasoning backend: the agent loop, its safety gates, and every file edit stay inside copperhead, identical to the other providers.
 
 ```bash
-npm i @anthropic-ai/claude-agent-sdk        # not bundled; install it yourself (see note)
 claude setup-token                          # while logged into Claude Code
 export CLAUDE_CODE_OAUTH_TOKEN=...           # the token setup-token printed
 copperhead do "add reverse-polarity protection on VIN" --model claude-code
 ```
 
-The SDK is intentionally not a declared dependency: it peer-requires a newer `@anthropic-ai/sdk` than copperhead pins, so bundling it would break `npm install` for everyone. Install it yourself (you may need `npm i @anthropic-ai/claude-agent-sdk --legacy-peer-deps`). copperhead lazy-loads it and prints an actionable error if it's absent.
+The Claude Agent SDK ships as an optional dependency, so a normal install pulls it in. copperhead loads it only when you select `claude-code`, and prints an actionable error if it is missing (for example after `npm install --omit=optional`), telling you to add it with `npm i @anthropic-ai/claude-agent-sdk`.
 
 copperhead never reads, copies, or logs the credential; the CLI owns authentication. A missing dependency or an unauthenticated install fails with an actionable message and touches nothing.
 

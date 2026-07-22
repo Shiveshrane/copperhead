@@ -2,7 +2,7 @@
 
 ## 1. Packaging
 
-- [x] 1.1 Do **not** declare `@anthropic-ai/claude-agent-sdk` in `package.json`: its hard peer on `@anthropic-ai/sdk >=0.93.0` conflicts with the pinned `^0.39.0` and a peer conflict fails `npm install` even for an `optionalDependency` (design D3). It stays a documented manual install; the provider lazy-imports it and errors actionably when absent
+- [x] 1.1 Declare `@anthropic-ai/claude-agent-sdk` under `optionalDependencies` in `package.json` (its `@anthropic-ai/sdk >=0.93.0` peer is satisfied by the prerequisite PR #56 core-SDK bump plus a `zod ^4` override; design D3). The provider lazy-imports it and errors actionably when absent (e.g. `--omit=optional`)
 
 ## 2. Provider implementation
 

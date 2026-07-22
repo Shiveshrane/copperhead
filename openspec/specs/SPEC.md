@@ -334,7 +334,7 @@ interface Provider {
 - `openai.ts`: GPT-5 via chat completions + tool calling (hackathon shared key)
 - `anthropic.ts`: Claude via messages API + tool use
 - `codex.ts`: locally installed Codex CLI via the official SDK and saved `codex login` authentication; Codex runs read-only and returns structured Copperhead tool requests
-- `claude-code.ts`: saved-login Claude Code via the Claude Agent SDK: a reasoning-only backend (no SDK tools, built-ins disabled, isolated cwd) mapped onto the single-turn `Provider` seam so the loop stays the driver. Selected by `--model claude-code` / `claude-code:<id>` (routed ahead of the `claude*` prefix); needs no `ANTHROPIC_API_KEY` (uses `CLAUDE_CODE_OAUTH_TOKEN` / the logged-in CLI); never falls back to a keyed provider. `@anthropic-ai/claude-agent-sdk` is a documented manual install (its peer on a newer `@anthropic-ai/sdk` blocks declaring it).
+- `claude-code.ts`: saved-login Claude Code via the Claude Agent SDK: a reasoning-only backend (no SDK tools, built-ins disabled, isolated cwd) mapped onto the single-turn `Provider` seam so the loop stays the driver. Selected by `--model claude-code` / `claude-code:<id>` (routed ahead of the `claude*` prefix); needs no `ANTHROPIC_API_KEY` (uses `CLAUDE_CODE_OAUTH_TOKEN` / the logged-in CLI); never falls back to a keyed provider. `@anthropic-ai/claude-agent-sdk` ships as an `optionalDependency` (its `@anthropic-ai/sdk >=0.93.0` peer is satisfied by copperhead's bumped core SDK), lazily imported and only loaded when `claude-code` is selected.
 - Selection: `--model` flag > `COPPERHEAD_MODEL` env > config.json > default (whichever key is present)
 - All providers must pass the same integration test on the fixture repo
 
