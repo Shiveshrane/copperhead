@@ -116,7 +116,7 @@ copperhead create --brief brief.md [--model <model>] [--interactive]
 | Option | Description |
 | --- | --- |
 | `--brief <file>` | **Required.** The product brief, in markdown. |
-| `--model <model>` | `codex`, `gpt-5`, `claude`, `claude-code` (saved-login Claude Code, no `ANTHROPIC_API_KEY`), or `lmstudio` (local LM Studio server, no key). |
+| `--model <model>` | `codex`, `gpt-5`, `claude`, `claude-code` (saved-login Claude Code, no `ANTHROPIC_API_KEY`), or `lmstudio` / `lmstudio:<model-id>` (local LM Studio server, no key). |
 | `--interactive` | Re-enable the human gates: spec approval, and a pause before export. |
 
 Exits 1 if any stage fails to complete, 0 when the pipeline finishes.

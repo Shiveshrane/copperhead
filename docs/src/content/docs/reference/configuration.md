@@ -87,7 +87,7 @@ Set any of the first three to `codex` to use the installed Codex CLI and its sav
 
 If `codex` is not on `PATH`, point `COPPERHEAD_CODEX_PATH` at an executable explicitly. The optional SDK includes one at `node_modules/@openai/codex/bin/codex.js`; for a global installation, `$(npm root -g)/@openai/codex/bin/codex.js` resolves its path.
 
-Set any of the first three to `lmstudio` to run against a local model with no cloud account at all. A local server is never auto-detected — step 4 only ever picks a cloud provider, so `lmstudio` must be selected explicitly.
+Set any of the first three to `lmstudio` to run against a local model with no cloud account at all. A local server is never auto-detected: step 4 only ever picks a cloud provider, so `lmstudio` must be selected explicitly.
 
 If none of these produce a model, the command exits with an error telling you the available ways to set one. `check` never needs a model, since it makes no LLM calls at all.
 
@@ -97,7 +97,7 @@ Accepted model values (routing is by prefix, matched top to bottom):
 | --- | --- | --- |
 | `codex` / `codex:<id>` | Codex CLI, saved login | none (uses your `codex login`) |
 | `claude-code` / `claude-code:<id>` | Claude Code, saved login | none (uses `CLAUDE_CODE_OAUTH_TOKEN` / your logged-in CLI) |
-| `lmstudio` / `lmstudio:<id>` | Local LM Studio server | none (nothing leaves your machine) |
+| `lmstudio` / `lmstudio:<id>` | Local LM Studio server | none (a placeholder is sent, never a cloud key) |
 | `claude` / `claude-<id>` | Anthropic API | `ANTHROPIC_API_KEY` |
 | `gpt-5` / anything else | OpenAI API | `OPENAI_API_KEY` |
 
@@ -116,13 +116,15 @@ Authentication stays entirely with the CLI: copperhead never reads, copies, or l
 
 ### Local models (LM Studio)
 
-`--model lmstudio` points copperhead at a model running on your own machine. LM Studio serves an OpenAI-compatible endpoint, so copperhead reuses its existing OpenAI chat and tool-call mapping and simply changes the host. Nothing leaves your machine, no account is billed, and no API key is involved — copperhead sends a placeholder credential, never your `OPENAI_API_KEY`, so a local run cannot carry a cloud key to the configured host.
+`--model lmstudio` points copperhead at a model you host yourself. LM Studio serves an OpenAI-compatible endpoint, so copperhead reuses its existing OpenAI chat and tool-call mapping and simply changes the host. No account is billed and no API key is involved: copperhead sends a placeholder credential, never your `OPENAI_API_KEY`, so a local run cannot carry a cloud key to the configured endpoint.
 
 Use it for privacy-sensitive designs, offline or air-gapped work, and zero-marginal-cost iteration.
 
+What copperhead guarantees is the destination, not the distance. Prompts and design content go to whatever `LMSTUDIO_BASE_URL` names and to no other host. Left at the default `http://localhost:1234/v1`, nothing leaves your machine. Point it at a remote server and that content travels there: still unbilled, still carrying no cloud credential, but no longer local. Treat the endpoint as part of your data-handling decision.
+
 Setup:
 
-1. In LM Studio, load a **tool-capable** model — one whose card advertises function/tool calling. This is not optional: every action copperhead takes is a tool call, so a model that cannot emit them cannot drive the loop.
+1. In LM Studio, load a **tool-capable** model, one whose card advertises function/tool calling. This is not optional: every action copperhead takes is a tool call, so a model that cannot emit them cannot drive the loop.
 2. Start the server (Developer ▸ Start Server, or `lms server start`). The default endpoint is `http://localhost:1234/v1`.
 3. Run copperhead with no keys set:
 
@@ -130,7 +132,7 @@ Setup:
 copperhead do "add reverse-polarity protection on VIN" --model lmstudio
 ```
 
-Plain `lmstudio` asks the server which model is loaded and uses it, so the real model id lands in your run metadata and the response cache. `lmstudio:<model-id>` names one explicitly and skips that lookup.
+Plain `lmstudio` asks the server which model is loaded and uses it, so the real model id lands in your run metadata and the response cache. That lookup uses the OpenAI `/v1/models` endpoint, so on a server that does not expose one, name the model explicitly with `lmstudio:<model-id>`, which skips discovery entirely.
 
 Set `LMSTUDIO_BASE_URL` to point elsewhere. Since the only requirement is the OpenAI chat-completions protocol with tool calling, this also reaches other local servers:
 
@@ -142,6 +144,15 @@ LMSTUDIO_BASE_URL=http://localhost:8000/v1  copperhead do "..." --model lmstudio
 A local run never falls back to a cloud provider, even when `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` happens to be set and the local server is rate-limited or failing. An unreachable server, a server with no model loaded, and a model that rejects tool calls each fail with an actionable message and leave your tree untouched.
 
 Local models vary in how reliably they emit tool calls. If one replies with a tool call written as prose instead of a real one, copperhead detects it and steers the model back; if that repeats, the model is not tool-capable and should be swapped.
+
+### Choosing a local model
+
+Tool-capable is necessary but not sufficient. A run is a long multi-step loop over exact-match file edits, and smaller models tend to need more turns and to sometimes not converge: in our testing a 12B model completed a net rename about half the time, failing the rest on turn-budget exhaustion after repeatedly missing edit anchors. Two practical consequences:
+
+- Prefer a larger coder-tuned model where your hardware allows it.
+- If runs end on `turn-budget-exhausted` rather than an error, raise `--max-turns` before concluding the model cannot do the task.
+
+A run that does not converge is not destructive. The turn budget ends it, the working tree is restored to the pre-run snapshot, and the partial work is preserved in a git stash, so the cost is time rather than a damaged design.
 
 ## Files copperhead writes
 

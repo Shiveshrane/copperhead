@@ -113,18 +113,22 @@ copperhead never reads, copies, or logs the credential; the CLI owns authenticat
 
 ### Local models (LM Studio)
 
-`--model lmstudio` runs copperhead against a model on your own machine — for privacy-sensitive designs, offline or air-gapped work, and zero marginal cost. [LM Studio](https://lmstudio.ai/) serves an OpenAI-compatible endpoint, so copperhead reuses its existing chat and tool-call mapping and just changes the host.
+`--model lmstudio` runs copperhead against a model you host yourself: for privacy-sensitive designs, offline or air-gapped work, and zero marginal cost. [LM Studio](https://lmstudio.ai/) serves an OpenAI-compatible endpoint, so copperhead reuses its existing chat and tool-call mapping and just changes the host.
 
 ```bash
 # in LM Studio: load a tool-capable model, then Developer ▸ Start Server
 copperhead do "add reverse-polarity protection on VIN" --model lmstudio
 ```
 
-No API key is involved and nothing leaves your machine: copperhead sends a placeholder credential rather than your `OPENAI_API_KEY`, so a local run cannot carry a cloud key to the configured host. A local run also never falls back to a cloud provider, even when a cloud key is set and the local server is failing.
+No API key is involved. copperhead sends a placeholder credential rather than your `OPENAI_API_KEY`, so a local run cannot carry a cloud key to the configured endpoint, and it never falls back to a cloud provider even when a cloud key is set and the local server is failing.
 
-The model **must support function/tool calling** — every action copperhead takes is a tool call. Plain `lmstudio` uses whichever model the server has loaded; `lmstudio:<model-id>` names one explicitly.
+What is guaranteed is the destination, not the distance: prompts go to whatever `LMSTUDIO_BASE_URL` names and nowhere else. At the default `http://localhost:1234/v1` that means nothing leaves your machine. Point it at a remote host and your design content goes there instead (still unbilled and still carrying no cloud key, but no longer local).
 
-`LMSTUDIO_BASE_URL` (default `http://localhost:1234/v1`) points at any other OpenAI-compatible local server — Ollama, vLLM, llama.cpp.
+The model **must support function/tool calling**: every action copperhead takes is a tool call. Plain `lmstudio` uses whichever model the server has loaded, which requires the server to expose the OpenAI `/v1/models` endpoint; `lmstudio:<model-id>` names one explicitly and skips that lookup.
+
+Tool-capable is necessary but not sufficient. A copperhead run is a long multi-step loop over exact-match file edits, so expect smaller models to need more turns and to sometimes not converge: in our testing a 12B model completed a net rename about half the time, failing the rest on turn-budget exhaustion after looping on anchored edits. Prefer a larger coder-tuned model, and raise `--max-turns` if runs end on the budget. A failed run rolls back to the pre-run snapshot and stashes the work, so the cost of not converging is time, not a damaged board.
+
+`LMSTUDIO_BASE_URL` (default `http://localhost:1234/v1`) points at any other OpenAI-compatible server: Ollama, vLLM, or llama.cpp.
 
 ### Ordering (`export bom`)
 
