@@ -38,6 +38,19 @@ const PLACEHOLDER_API_KEY = 'lm-studio';
 
 export type LMStudioProviderOptions = Omit<OpenAIProviderOptions, 'apiKey'>;
 
+/**
+ * Pick the endpoint, treating blank/whitespace-only as unset.
+ *
+ * Load-bearing, not tidiness: `??` alone preserves `''`, and the base class omits
+ * a falsy `baseURL` from the SDK options, so an empty `LMSTUDIO_BASE_URL` would
+ * silently fall through to the SDK default — `https://api.openai.com` — sending a
+ * run the user asked to keep local to a cloud host. `.env.example` ships the key
+ * present-but-empty, which is exactly how that happens in practice.
+ */
+function resolveBaseURL(explicit?: string): string {
+  return explicit?.trim() || process.env.LMSTUDIO_BASE_URL?.trim() || LMSTUDIO_DEFAULT_BASE_URL;
+}
+
 export class LMStudioProvider extends OpenAIProvider {
   override readonly name = 'lmstudio';
   /** Memoized result of the model-discovery probe (D3). */
@@ -46,7 +59,7 @@ export class LMStudioProvider extends OpenAIProvider {
   constructor(opts: LMStudioProviderOptions = {}) {
     super({
       ...opts,
-      baseURL: opts.baseURL ?? process.env.LMSTUDIO_BASE_URL ?? LMSTUDIO_DEFAULT_BASE_URL,
+      baseURL: resolveBaseURL(opts.baseURL),
       apiKey: PLACEHOLDER_API_KEY,
     });
   }
@@ -125,9 +138,9 @@ export class LMStudioProvider extends OpenAIProvider {
     }
     if (isToolsUnsupported(err)) {
       return new Error(
-        'the model loaded in LM Studio rejected the tool-calling request — copperhead needs a ' +
-          'tool-capable model (one whose card advertises function/tool calling), since every ' +
-          `action it takes is a tool call (original error: ${(err as Error)?.message ?? String(err)})`,
+        `the model loaded at ${this.endpoint} rejected the tool-calling request — copperhead ` +
+          'needs a tool-capable model (one whose card advertises function/tool calling), since ' +
+          `every action it takes is a tool call (original error: ${(err as Error)?.message ?? String(err)})`,
         { cause: err },
       );
     }

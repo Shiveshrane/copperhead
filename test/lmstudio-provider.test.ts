@@ -142,6 +142,24 @@ describe('LMStudioProvider — endpoint and credentials', () => {
     );
   });
 
+  it('treats a blank endpoint as unset instead of falling through to api.openai.com', async () => {
+    // Regression: `??` preserves '', and the base class omits a falsy baseURL
+    // from the SDK options, so an empty LMSTUDIO_BASE_URL sent a run the user
+    // asked to keep local to the SDK default cloud host. .env.example ships this
+    // key present-but-empty, which is exactly how it happened.
+    for (const blank of ['', '   ']) {
+      process.env.LMSTUDIO_BASE_URL = blank;
+      expect(new LMStudioProvider().endpoint).toBe(LMSTUDIO_DEFAULT_BASE_URL);
+      expect(new LMStudioProvider({ baseURL: blank }).endpoint).toBe(LMSTUDIO_DEFAULT_BASE_URL);
+    }
+    // and the URL the SDK client is actually built with is never a cloud host
+    delete process.env.LMSTUDIO_BASE_URL;
+    const provider = new LMStudioProvider({ baseURL: '  ' });
+    const built = await (provider as unknown as { client(): Promise<{ baseURL?: string }> }).client();
+    expect(built.baseURL).toBe(LMSTUDIO_DEFAULT_BASE_URL);
+    expect(built.baseURL).not.toMatch(/openai\.com/);
+  });
+
   it('constructs with no cloud API key set', () => {
     // The OpenAI provider cannot; that is the whole point of this one.
     expect(() => new OpenAIProvider()).toThrow(/OPENAI_API_KEY is not set/);
@@ -248,10 +266,16 @@ describe('LMStudioProvider — errors', () => {
     await expect(provider.chat(messages, tools)).rejects.toThrow(/LMSTUDIO_BASE_URL/);
   });
 
-  it('reports a model that cannot do tool calling', async () => {
+  it('reports a model that cannot do tool calling, naming the configured endpoint', async () => {
     const err = Object.assign(new Error('400 model does not support tools'), { status: 400 });
-    const provider = new LMStudioProvider({ model: 'x', client: fakeClient({ throws: err }) });
+    const provider = new LMStudioProvider({
+      model: 'x',
+      baseURL: 'http://localhost:11434/v1',
+      client: fakeClient({ throws: err }),
+    });
     await expect(provider.chat(messages, tools)).rejects.toThrow(/tool-capable model/);
+    // an overridden host must be identifiable from the error alone
+    await expect(provider.chat(messages, tools)).rejects.toThrow(/localhost:11434/);
   });
 
   it('re-throws other errors untouched so the retry layer still sees the status', async () => {

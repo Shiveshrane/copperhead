@@ -229,7 +229,16 @@ async function runWithMemory(
   // designed the board, and two different local models would share cache entries
   // (F6). Best-effort — a failure here (e.g. server down) falls back to the
   // routing string and is surfaced properly by the first chat() instead.
-  const effectiveModel = await provider.resolvedModelId?.().catch(() => undefined) ?? opts.model;
+  //
+  // Timed out like any other provider call: this runs BEFORE the turn loop, so
+  // its heartbeat, watchdog, and retry machinery do not exist yet. A server that
+  // accepts the connection but never answers (still loading a model, wedged)
+  // would otherwise hang the run here with nothing to interrupt it.
+  const effectiveModel =
+    (await withTimeout(
+      async () => provider.resolvedModelId?.(),
+      config.turnTimeoutMs,
+    ).catch(() => undefined)) ?? opts.model;
   // Cache every turn's response so a retried/restarted stage replays what it
   // already paid for instead of re-calling the model (repo-scoped, cross-run).
   // Skip an injected provider (tests drive scripted providers directly).
