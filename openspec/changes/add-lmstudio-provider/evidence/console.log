@@ -1,6 +1,6 @@
 $ env -u OPENAI_API_KEY -u ANTHROPIC_API_KEY copperhead do "rename net KEY_DAH to KEY_DASH" --model lmstudio --plain
 
-copperhead v0.7.0 (/Users/shiveshrane/Desktop/copperhead) · kicad-cli 10.0.4 · node v22.23.1 · darwin-arm64
+copperhead v0.7.0 (<REDACTED-INSTALL-PATH>) · kicad-cli 10.0.4 · node v22.23.1 · darwin-arm64
 run 2026-07-24T18-51-46-411Z · do · model google/gemma-4-12b (lmstudio, via flag) · turns ≤40 · repo main@9c1d4d4 dirty(1)
 [turn 1/40 · 0 in / 0 out]
   [read_file] # Pinout

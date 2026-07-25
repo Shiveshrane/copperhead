@@ -91,8 +91,14 @@ survives anywhere in `hardware/` or `docs/`.
 2 changed lines in a 272-line schematic — **0.74%**, against AC-3.7's < 5% bound. The
 file was edited in place, not regenerated.
 
-**Redaction (AC-4.1).** `grep -rE 'sk-[A-Za-z0-9_-]{20,}'` over the run artifacts and
-this directory matches nothing.
+**Redaction (AC-4.1).** `grep -rE 'sk-[A-Za-z0-9_-]+'` over the run artifacts and this
+directory matches nothing. The pattern is deliberately the same one the runtime
+redactor uses, with no minimum-length suffix: a `{20,}` variant would report clean
+while a shorter `sk-` token survived.
+
+Absolute install paths and the git author header have additionally been replaced with
+`<REDACTED-…>` placeholders. Neither is evidence of anything; both are workstation
+metadata that a committed artifact does not need to carry.
 
 ## Files
 

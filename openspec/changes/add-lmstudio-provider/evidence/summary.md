@@ -9,7 +9,7 @@
 
 - **Run:** 2026-07-24T18-51-46-411Z · do · started 2026-07-24T18:51:46.468Z · autonomous
 - **Model:** google/gemma-4-12b (lmstudio, via flag)
-- **copperhead:** v0.7.0 at /Users/shiveshrane/Desktop/copperhead
+- **copperhead:** v0.7.0 at <REDACTED-INSTALL-PATH>
 - **Tooling:** kicad-cli 10.0.4 · node v22.23.1 · darwin-arm64
 - **Config:** schematic hardware/open-key.kicad_sch · board hardware/open-key.kicad_pcb · docs docs/ · maxTurns 40 · maxRepairCycles 5 · budgets {}
 - **Repo:** main@9c1d4d426455cd6990a3e92a254ef7208f3cf3db · dirty (1 uncommitted) · pre-commit hook installed
