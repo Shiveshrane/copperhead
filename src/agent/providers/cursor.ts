@@ -9,6 +9,11 @@ import { parseToolCalls, renderConversation, renderDelta, renderToolProtocol } f
  * Saved-login provider: drives the Cursor Agent CLI (`agent` / `cursor-agent`) with
  * `agent login` authentication. Reasoning-only: plan mode, sandbox, isolated
  * workspace, JSON tool protocol (see `add-cursor-cli-provider`).
+ *
+ * Session resume is opt-in and mutually exclusive with the response cache (same
+ * rule as claude-code): the cache can replay turns a resumed CLI session never
+ * saw, which desyncs history. `makeProvider` enables resume only when the cache
+ * is off.
  */
 
 export interface CursorRunArgs {
@@ -41,6 +46,9 @@ const NATIVE_MUTATION_TYPES = new Set([
   'mcp_tool',
 ]);
 
+/** Subtype tokens that indicate native execution (whole-token match). */
+const NATIVE_SUBTYPE_RE = /(^|_)(tool|shell|write|edit|patch|mutation)(_|$)/;
+
 export class CursorProvider implements Provider {
   readonly name = 'cursor';
   private callSeq = 0;
@@ -52,6 +60,13 @@ export class CursorProvider implements Provider {
   constructor(
     private readonly model?: string,
     private readonly runFn: CursorRunLike = defaultCursorRun,
+    /**
+     * Opt-in: resume one CLI session across turns and send only new messages.
+     * OFF by default and mutually exclusive with the response cache — mixing
+     * them desyncs the resumed session. `makeProvider` enables it only when
+     * the cache is off.
+     */
+    private readonly sessionResume = false,
   ) {}
 
   async chat(messages: Msg[], tools: ToolSchema[], opts: ChatOpts = {}): Promise<Turn> {
@@ -60,7 +75,7 @@ export class CursorProvider implements Provider {
       .map((m) => m.content)
       .join('\n\n');
     const systemPrompt = [system, renderToolProtocol(tools)].filter(Boolean).join('\n\n');
-    const resume = this.sessionId;
+    const resume = this.sessionResume ? this.sessionId : undefined;
     const prompt = resume ? renderDelta(messages, this.sentCount) : renderConversation(messages);
     const catalog = new Set(tools.map((t) => t.name));
     const workspace = await this.ensureWorkspace();
@@ -81,7 +96,7 @@ export class CursorProvider implements Provider {
         env: subprocessEnv(),
       });
       text = result.text;
-      if (result.sessionId) this.sessionId = result.sessionId;
+      if (this.sessionResume && result.sessionId) this.sessionId = result.sessionId;
       inputTokens = result.usage.inputTokens;
       outputTokens = result.usage.outputTokens;
       opts.onStream?.(text.length);
@@ -92,7 +107,8 @@ export class CursorProvider implements Provider {
       this.inFlight.delete(aborter);
     }
 
-    this.sentCount = messages.length;
+    // Only advance the high-water mark when resume is on (same as claude-code).
+    if (this.sessionResume) this.sentCount = messages.length;
     const parsed = parseToolCalls(text, () => `cur-${++this.callSeq}`, catalog);
     return {
       text: parsed.text,
@@ -149,6 +165,10 @@ const CURSOR_SUBPROCESS_ENV_KEYS = [
   'XDG_DATA_HOME',
   'XDG_CACHE_HOME',
   'XDG_RUNTIME_DIR',
+  // Windows home / login-config location (`USERPROFILE\.cursor\cli-config.json`)
+  'USERPROFILE',
+  'HOMEDRIVE',
+  'HOMEPATH',
   'SystemRoot',
   'ComSpec',
   'APPDATA',
@@ -167,12 +187,33 @@ export function subprocessEnv(): NodeJS.ProcessEnv {
 
 /** Parse `--print --output-format json` stdout into assistant text and session id. */
 export function parseCursorStdout(stdout: string): CursorRunResult {
-  const lines = stdout
+  const trimmed = stdout.trim();
+  let text = '';
+  let sessionId: string | undefined;
+  let sawResult = false;
+
+  // Prefer a single pretty-printed JSON object (whole buffer) before NDJSON lines.
+  if (trimmed) {
+    try {
+      const whole = JSON.parse(trimmed) as Record<string, unknown>;
+      const extracted = extractResultFields(whole);
+      if (extracted) {
+        return {
+          text: extracted.text,
+          sessionId: extracted.sessionId,
+          usage: { inputTokens: 0, outputTokens: 0 },
+        };
+      }
+    } catch (err) {
+      if (isCursorHardFail(err)) throw err;
+      // fall through to line-based parse
+    }
+  }
+
+  const lines = trimmed
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean);
-  let text = '';
-  let sessionId: string | undefined;
 
   for (const line of lines) {
     let obj: Record<string, unknown>;
@@ -181,34 +222,69 @@ export function parseCursorStdout(stdout: string): CursorRunResult {
     } catch {
       continue;
     }
-    assertNoNativeMutation(obj);
-    const type = typeof obj.type === 'string' ? obj.type.toLowerCase() : '';
-    if (type === 'result') {
-      if (typeof obj.result === 'string') text = obj.result;
-      if (typeof obj.session_id === 'string') sessionId = obj.session_id;
-      if (obj.is_error === true) {
-        throw new Error(typeof obj.result === 'string' ? obj.result : 'Cursor Agent returned an error result');
-      }
+    const extracted = extractResultFields(obj);
+    if (extracted) {
+      text = extracted.text;
+      sessionId = extracted.sessionId ?? sessionId;
+      sawResult = true;
     }
   }
 
-  if (!text && lines.length) {
+  if (!sawResult && !text && lines.length) {
     // Fallback: last parseable JSON line with a string result field
     for (let i = lines.length - 1; i >= 0; i--) {
       try {
         const obj = JSON.parse(lines[i]!) as Record<string, unknown>;
         if (typeof obj.result === 'string') {
+          assertNoNativeMutation(obj);
           text = obj.result;
           if (typeof obj.session_id === 'string') sessionId = obj.session_id;
+          sawResult = true;
           break;
         }
-      } catch {
+      } catch (err) {
+        if (isCursorHardFail(err)) throw err;
         continue;
       }
     }
   }
 
+  if (!sawResult && trimmed) {
+    throw new Error(
+      `cursor: could not parse Cursor Agent output as JSON — raw stdout: ${trimmed.slice(0, 500)}`,
+    );
+  }
+
+  // Official Cursor JSON schema does not expose token usage; callers see zeros.
   return { text, sessionId, usage: { inputTokens: 0, outputTokens: 0 } };
+}
+
+function extractResultFields(
+  obj: Record<string, unknown>,
+): { text: string; sessionId?: string } | null {
+  assertNoNativeMutation(obj);
+  const type = typeof obj.type === 'string' ? obj.type.toLowerCase() : '';
+  if (type === 'result' || typeof obj.result === 'string') {
+    if (obj.is_error === true) {
+      throw new Error(typeof obj.result === 'string' ? obj.result : 'Cursor Agent returned an error result');
+    }
+    if (typeof obj.result === 'string') {
+      return {
+        text: obj.result,
+        ...(typeof obj.session_id === 'string' ? { sessionId: obj.session_id } : {}),
+      };
+    }
+  }
+  return null;
+}
+
+function isCursorHardFail(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.message.includes('reasoning-only invariant') ||
+      err.message.includes('Cursor Agent returned an error') ||
+      err.message.startsWith('cursor:'))
+  );
 }
 
 function assertNoNativeMutation(obj: Record<string, unknown>): void {
@@ -219,9 +295,9 @@ function assertNoNativeMutation(obj: Record<string, unknown>): void {
     );
   }
   const subtype = typeof obj.subtype === 'string' ? obj.subtype.toLowerCase() : '';
-  if (/tool|shell|write|edit|patch|mutation/.test(subtype) && type !== 'result') {
+  if (subtype && NATIVE_SUBTYPE_RE.test(subtype) && type !== 'result') {
     throw new Error(
-      `cursor: Cursor Agent output subtype "${obj.subtype}" suggests native execution — reasoning-only invariant violated.`,
+      `cursor: Cursor Agent output subtype "${obj.subtype}" (line type "${obj.type ?? ''}") suggests native execution — reasoning-only invariant violated.`,
     );
   }
 }
@@ -230,6 +306,8 @@ function assertNoNativeMutation(obj: Record<string, unknown>): void {
 export async function defaultCursorRun(args: CursorRunArgs): Promise<CursorRunResult> {
   const bin = process.env.COPPERHEAD_CURSOR_PATH || 'agent';
   const fullPrompt = [args.systemPrompt, args.prompt].filter(Boolean).join('\n\n---\n\n');
+  // Prompt goes on stdin — a single argv element caps at ~128 KiB on Linux
+  // (MAX_ARG_STRLEN); real .kicad_pcb reads routinely exceed that.
   const cmdArgs = [
     '--print',
     '--output-format',
@@ -244,9 +322,9 @@ export async function defaultCursorRun(args: CursorRunArgs): Promise<CursorRunRe
   ];
   if (args.model) cmdArgs.push('--model', args.model);
   if (args.resume) cmdArgs.push('--resume', args.resume);
-  cmdArgs.push(fullPrompt);
 
   const { stdout } = await execa(bin, cmdArgs, {
+    input: fullPrompt,
     env: args.env ?? subprocessEnv(),
     cancelSignal: args.signal,
     reject: true,
@@ -256,9 +334,12 @@ export async function defaultCursorRun(args: CursorRunArgs): Promise<CursorRunRe
 }
 
 function isAuthError(err: unknown): boolean {
-  const status = (err as { status?: number; exitCode?: number })?.status
-    ?? (err as { exitCode?: number })?.exitCode;
-  if (typeof status === 'number') return status === 401 || status === 403;
+  // Subprocess failures use exitCode, not HTTP status. Only treat real HTTP
+  // status fields as 401/403; otherwise match the CLI's auth message.
+  const status =
+    (err as { status?: number; statusCode?: number })?.status ??
+    (err as { statusCode?: number })?.statusCode;
+  if (status === 401 || status === 403) return true;
   const m = ((err as Error)?.message ?? '').toLowerCase();
   return /unauthenticat|unauthoriz|not logged in|please log in|login required|agent login/.test(m);
 }

@@ -76,6 +76,16 @@ export interface ParsedToolTurn {
   nudge?: string;
 }
 
+/**
+ * Detect a malformed-but-intended tool call in a turn that dispatched none
+ * (#I10). The signature is machine-recognizable: the text contains
+ * `"tool":"<name>"` naming a tool in the current catalog, yet nothing parsed.
+ * That is the exact case where the tolerant extractor's silence misleads the
+ * model — the JSON was near-miss malformed (a brace short, or the outer object
+ * split so only an inner `{args}` with no `tool` key balanced), not the tool
+ * being broken. Returns a one-line steer to re-emit it, or undefined when the
+ * absence of a call is genuine (plain prose, no tool named).
+ */
 function detectMalformedCall(text: string, catalog: Set<string>): string | undefined {
   const re = /"tool"\s*:\s*"([^"]+)"/g;
   let m: RegExpExecArray | null;
@@ -92,6 +102,14 @@ function detectMalformedCall(text: string, catalog: Set<string>): string | undef
   return undefined;
 }
 
+/**
+ * Extract tool-call JSON from the model's reply. Tolerant by design (D1):
+ * unparseable output is returned as plain text with no tool calls rather than
+ * throwing, so a non-conforming turn degrades to the loop's stall/nudge path.
+ * A parsed block only counts as a tool call when its name is in the current
+ * turn's catalog (`availableTools(ctx)`): a hallucinated or locked tool name is
+ * left as prose so the loop nudges, rather than dispatching a bogus call.
+ */
 export function parseToolCalls(
   text: string | null,
   nextId: () => string,
@@ -101,12 +119,20 @@ export function parseToolCalls(
   const toolCalls: ToolCall[] = [];
   const matched: Array<[number, number]> = [];
 
+  // Extract tool calls by scanning for complete JSON objects, NOT by matching
+  // ``` fences. A tool call's `content`/`args` can hold a full markdown doc that
+  // itself contains ``` code fences; a fence regex truncates the JSON at the
+  // first inner fence, JSON.parse fails, and the call is silently dropped (the
+  // model then assumes it wrote a file it never did). The brace scan is
+  // string-aware, so braces and backticks inside JSON string values are ignored.
   let searchFrom = 0;
   while (searchFrom < text.length) {
     const braceAt = text.indexOf('{', searchFrom);
     if (braceAt < 0) break;
     const span = scanJsonObject(text, braceAt);
     if (!span) {
+      // Unbalanced '{' (stray brace in prose): retry from the next candidate so
+      // one bad brace can't hide a well-formed call later in the reply.
       searchFrom = braceAt + 1;
       continue;
     }
@@ -119,9 +145,17 @@ export function parseToolCalls(
   }
 
   if (!toolCalls.length) {
+    // No call dispatched — but did the model clearly *intend* one? A fenced
+    // ```json block that names a catalog tool yet produced zero calls is a
+    // malformed near-miss (unbalanced braces, a missing `}`, or an inner object
+    // with no `tool` key). Silently dropping it gives the model no signal, so it
+    // misreads "no result" as "this tool is broken" and can bake that false
+    // conclusion into a committed summary (#I10). Surface a nudge instead.
     return { text: text.trim() ? text : null, toolCalls, nudge: detectMalformedCall(text, catalog) };
   }
 
+  // Prose is whatever survives once the tool-call objects (and any now-empty
+  // ```json fences around them) are removed.
   let prose = '';
   let cursor = 0;
   for (const [start, end] of matched) {
@@ -133,6 +167,11 @@ export function parseToolCalls(
   return { text: prose.length ? prose : null, toolCalls };
 }
 
+/**
+ * Find the first complete, brace-balanced JSON object at or after `from`,
+ * respecting JSON string quoting/escaping so braces or backticks inside string
+ * values do not end the scan. Returns its `[start, end)` bounds or null.
+ */
 function scanJsonObject(text: string, from: number): { start: number; end: number } | null {
   const start = text.indexOf('{', from);
   if (start < 0) return null;
@@ -165,6 +204,8 @@ function toToolCall(raw: string | undefined, nextId: () => string, catalog: Set<
   if (!obj || typeof obj !== 'object') return null;
   const rec = obj as Record<string, unknown>;
   if (typeof rec.tool !== 'string') return null;
+  // Only accept names the turn actually advertised. An empty catalog means the
+  // turn offered no tools, so nothing parses as a call.
   if (!catalog.has(rec.tool)) return null;
   const args = rec.args && typeof rec.args === 'object' ? (rec.args as Record<string, unknown>) : {};
   return { id: nextId(), name: rec.tool, args };

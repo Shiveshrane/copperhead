@@ -89,17 +89,17 @@ If `codex` is not on `PATH`, point `COPPERHEAD_CODEX_PATH` at an executable expl
 
 If none of these produce a model, the command exits with an error telling you the available ways to set one. `check` never needs a model, since it makes no LLM calls at all.
 
-Accepted model values (routing is by prefix, matched top to bottom):
+Accepted model values (routing is by prefix; `makeProvider` checks `codex`, then `claude-code`, then `cursor`, then `claude`, then OpenAI):
 
 | Value | Provider | Key |
 | --- | --- | --- |
+| `codex` / `codex:<id>` | Codex CLI, saved login | none (local Codex login) |
 | `claude-code` / `claude-code:<id>` | Claude Code, saved login | none (uses `CLAUDE_CODE_OAUTH_TOKEN` / your logged-in CLI) |
 | `cursor` / `cursor:<id>` | Cursor Agent CLI, saved login | none (`agent login`) |
-| `codex` / `codex:<id>` | Codex CLI, saved login | none (local Codex login) |
 | `claude` / `claude-<id>` | Anthropic API | `ANTHROPIC_API_KEY` |
 | `gpt-5` / anything else | OpenAI API | `OPENAI_API_KEY` |
 
-`claude-code` is matched before the `claude` prefix, so it is never captured by the Anthropic API route.
+`claude-code` is matched before the `claude` prefix, so it is never captured by the Anthropic API route. Cursor runs report 0 token usage (CLI JSON has no usage fields).
 
 ### Saved login (Claude Code)
 

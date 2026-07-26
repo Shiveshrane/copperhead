@@ -102,11 +102,11 @@ Global flags: `--repo <path>` (default: cwd) and `--json` for machine-readable o
 `--model cursor` drives the Cursor Agent CLI with your saved login from `agent login`, so you can run copperhead with **no `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`**. Cursor is used purely as a reasoning backend in plan mode: the agent loop, safety gates, and every file edit stay inside copperhead.
 
 ```bash
-agent login status
+agent status
 copperhead do "add reverse-polarity protection on VIN" --model cursor
 ```
 
-If `agent` is not on `PATH`, set `COPPERHEAD_CURSOR_PATH` to the CLI binary (also available as `cursor-agent` on some installs).
+If `agent` is not on `PATH`, set `COPPERHEAD_CURSOR_PATH` to the CLI binary (also available as `cursor-agent` on some installs). Cursor's JSON schema does not report token usage, so run summaries show 0 tokens for `--model cursor`.
 
 ### Saved login (Claude Code)
 

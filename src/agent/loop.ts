@@ -107,7 +107,7 @@ export async function makeProvider(model: string, sessionResume = false): Promis
     if (cursorModel === '') {
       throw new Error('cursor model override cannot be empty; use "cursor" or "cursor:<model-id>"');
     }
-    return new CursorProvider(cursorModel);
+    return new CursorProvider(cursorModel, undefined, sessionResume);
   }
   if (model === 'claude' || model.startsWith('claude')) {
     return new AnthropicProvider(model === 'claude' ? undefined : model);
@@ -214,9 +214,9 @@ async function runWithMemory(
     finishRequest: null,
   };
 
-  // Session resume for claude-code (1.1) is only correct when the response cache
-  // is off: the cache replays turns a resumed session never saw. So enable it
-  // only when the env flag is set AND config.llmCache is disabled — the same
+  // Session resume for claude-code / cursor is only correct when the response
+  // cache is off: the cache replays turns a resumed session never saw. So enable
+  // it only when the env flag is set AND config.llmCache is disabled — the same
   // condition under which we skip the CachingProvider wrap below.
   const sessionResume = process.env.COPPERHEAD_CC_SESSION_RESUME === '1' && !config.llmCache;
   let provider = opts.provider ?? (await makeProvider(opts.model, sessionResume));
