@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { mkdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { runDoctor, checkCredential, formatDoctor, type DoctorDeps } from '../src/commands/doctor.js';
 import { tempFixtureRepo } from './helpers.js';
 
@@ -56,6 +58,24 @@ describe('copperhead doctor', () => {
       const kicad = r.checks.find((c) => c.name === 'kicad-cli')!;
       expect(kicad.status).toBe('fail');
       expect(kicad.hint).toMatch(/install KiCad/i);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('a corrupted .copperhead/config.json fails the project check, not the whole command', async () => {
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      await mkdir(path.join(repo, '.copperhead'), { recursive: true });
+      await writeFile(path.join(repo, '.copperhead', 'config.json'), '{ this is not valid json,,,', 'utf8');
+      const r = await runDoctor({ repoRoot: repo, model: 'gpt-5', deps: deps({ env: { OPENAI_API_KEY: 'sk-x' } }) });
+      expect(r.ok).toBe(false);
+      const project = r.checks.find((c) => c.name === 'project')!;
+      expect(project.status).toBe('fail');
+      expect(project.detail).toContain('malformed');
+      // Provider resolution still works from --model/env, unaffected by the broken config.
+      const provider = r.checks.find((c) => c.name === 'provider')!;
+      expect(provider.status).toBe('ok');
     } finally {
       await cleanup();
     }

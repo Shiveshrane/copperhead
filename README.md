@@ -94,7 +94,7 @@ copperhead create --brief brief.md   # brief → full output package
 copperhead export bom --supplier jlcpcb   # supplier-ready ordering file from docs/BOM.md
 ```
 
-Global flags: `--repo <path>` (default: cwd) and `--json` for machine-readable output. `do` and `create` take `--model` and `--interactive`; `do` also takes `--dry-run`, `--max-turns`, and `--allow-dirty`.
+Global flags: `--repo <path>` (default: cwd) and `--json` for machine-readable output. `--model` is available on `do`, `sync`, `create`, and `doctor`; `--interactive` only on `do` and `create`; `do` also takes `--dry-run`, `--max-turns`, and `--allow-dirty`.
 
 `--model` accepts `gpt-5` (OpenAI), `claude` / `claude-<id>` (Anthropic API), `claude-code` / `claude-code:<id>` (Claude Code, saved login), and `codex` / `codex:<id>` (Codex CLI, saved login). Routing is by prefix; `claude-code` is matched before the `claude` prefix.
 

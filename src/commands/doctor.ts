@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { loadConfig, resolveModel } from '../config.js';
+import { DEFAULTS, loadConfig, resolveModel, type CopperheadConfig } from '../config.js';
 import { kicadCliVersion } from '../kicad/cli.js';
 
 const execFileP = promisify(execFile);
@@ -170,15 +170,33 @@ export interface RunDoctorOptions {
   deps?: Partial<DoctorDeps>;
 }
 
+// Same shape loadConfig returns when no config file exists at all: a safe
+// fallback so a corrupted config.json degrades the project check, not the
+// whole command (resolveModel's config.model precedence level is simply
+// unavailable; --model/COPPERHEAD_MODEL/an available key still resolve).
+const FALLBACK_CONFIG: CopperheadConfig = { schematic: null, board: null, ...DEFAULTS };
+
 export async function runDoctor(opts: RunDoctorOptions): Promise<DoctorReport> {
   const deps = { ...defaultDeps(), ...opts.deps };
-  const config = await loadConfig(opts.repoRoot);
+  let config: CopperheadConfig;
+  let configError: DoctorCheck | undefined;
+  try {
+    config = await loadConfig(opts.repoRoot);
+  } catch (err) {
+    config = FALLBACK_CONFIG;
+    configError = {
+      name: 'project',
+      status: 'fail',
+      detail: `.copperhead/config.json is malformed: ${(err as Error).message}`,
+      hint: 'fix or delete .copperhead/config.json (rerun `copperhead init`/`copperhead create` to regenerate it).',
+    };
+  }
   const checks: DoctorCheck[] = [
     nodeCheck(deps.nodeVersion),
     await kicadCheck(deps.kicadVersion),
     await gitCheck(deps.gitVersion),
     providerCheck(opts.model, config, deps.env),
-    projectCheck(config, opts.repoRoot),
+    configError ?? projectCheck(config, opts.repoRoot),
   ];
   return { ok: checks.every((c) => c.status !== 'fail'), checks };
 }
