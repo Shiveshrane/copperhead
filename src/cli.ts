@@ -8,6 +8,8 @@ import { runInit, InitError } from './memory/scaffold.js';
 import { runCheck } from './commands/check.js';
 import { syncVerify, syncResolve, formatSyncReport } from './commands/sync.js';
 import { runCreate } from './commands/create.js';
+import { runDemo, demoTourText } from './commands/demo.js';
+import { runRepl } from './commands/repl.js';
 import {
   runExportBom,
   parseSupplier,
@@ -70,6 +72,52 @@ program
 
 const rendererOf = () =>
   makeRenderer({ json: Boolean(program.opts().json), plain: Boolean(program.opts().plain) });
+
+program
+  .command('repl', { isDefault: true })
+  .description('interactive agent shell (default when no command is given)')
+  .argument('[request...]', 'optional first change request before the prompt loop')
+  .option('--model <model>', 'codex | gpt-5 | claude | claude-code (or a provider-specific model id)')
+  .option('--max-turns <n>', 'turn budget per request')
+  .option('--interactive', 'pause for approval after each proposal validates')
+  .action(
+    async (
+      requestParts: string[],
+      opts: { model?: string; maxTurns?: string; interactive?: boolean },
+    ) => {
+      const repo = repoOf(program.opts());
+      if (program.opts().json) {
+        console.error(
+          'copperhead: --json is not supported with the interactive shell. Use `copperhead do "<request>" --json`.',
+        );
+        process.exit(1);
+      }
+      try {
+        const kicadVer = await kicadCliVersion();
+        const config = await loadConfig(repo);
+        const { model, source } = resolveModel(opts.model, config);
+        const continuePrompt = budgetContinuePrompt();
+        const seed = requestParts.length ? requestParts.join(' ') : undefined;
+        const res = await runRepl({
+          repoRoot: repo,
+          model,
+          modelSource: source,
+          version,
+          kicadCliVersion: kicadVer,
+          ...(opts.maxTurns ? { maxTurns: parseInt(opts.maxTurns, 10) } : {}),
+          interactive: opts.interactive ?? false,
+          ...(seed ? { seed } : {}),
+          confirm: confirmTty,
+          ...(continuePrompt ? { onBudgetExhausted: continuePrompt } : {}),
+          renderer: rendererOf(),
+        });
+        process.exit(res.ok ? 0 : 1);
+      } catch (err) {
+        console.error((err as Error).message);
+        process.exit(1);
+      }
+    },
+  );
 
 program
   .command('init')
@@ -191,6 +239,46 @@ program
       const res = await syncResolve(repo, report, model, json ? () => {} : (s) => console.log(s), {
         renderer: rendererOf(),
         meta: { command: 'sync', modelSource: source, version, kicadCliVersion: kicadVer },
+      });
+      process.exit(res.ok ? 0 : 1);
+    } catch (err) {
+      console.error((err as Error).message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('demo')
+  .description('tour of what copperhead does, or run the USB-C breakout create pipeline')
+  .option('--model <model>', 'codex | cursor | gpt-5 | claude | claude-code (or a provider-specific model id)')
+  .option('--interactive', 're-enable the human gates (spec approval, pre-export)')
+  .option('--dir <path>', 'demo repo directory (default: demo-runs/usb-c-breakout)')
+  .option('--tour', 'print the overview only; do not run the pipeline')
+  .action(async (opts: { model?: string; interactive?: boolean; dir?: string; tour?: boolean }) => {
+    if (opts.tour) {
+      // Color on for attended TTY tours even without a renderer.
+      const { setColorEnabled } = await import('./agent/theme.js');
+      setColorEnabled(Boolean(process.stdout.isTTY) && !program.opts().plain && !process.env.NO_COLOR);
+      console.log(demoTourText());
+      process.exit(0);
+    }
+    try {
+      const kicadVer = await kicadCliVersion();
+      // Resolve model from the caller's cwd config / env / flag; the demo repo
+      // is scaffolded next and typically has no model of its own yet.
+      const config = await loadConfig(repoOf(program.opts()));
+      const { model, source } = resolveModel(opts.model, config);
+      const continuePrompt = budgetContinuePrompt();
+      const res = await runDemo({
+        model,
+        modelSource: source,
+        version,
+        kicadCliVersion: kicadVer,
+        interactive: opts.interactive ?? false,
+        ...(opts.dir ? { demoDir: opts.dir } : {}),
+        ...(continuePrompt ? { onBudgetExhausted: continuePrompt } : {}),
+        log: (s) => console.log(s),
+        renderer: rendererOf(),
       });
       process.exit(res.ok ? 0 : 1);
     } catch (err) {

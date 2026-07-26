@@ -235,6 +235,21 @@ This kills the last "docs drift" failure mode: requirements (openspec) → budge
 ## 3. CLI surface (Phase 1)
 
 ```
+copperhead [repl] ["<change request>"] [--model …]
+    Interactive agent shell (default when no subcommand is given).
+    Claude Code–style prompt loop on a TTY: each line runs one
+    `do`-equivalent change (same gates), then returns to the prompt.
+    Slash commands: /help, /demo, /examples, /status, /check, /parts, /nets,
+    /bom, /sync, /drift, /constraints, /openspec, /config, /git, /runs, /last,
+    /model, /version, /clear, /quit. Inspect commands are verify-only (no LLM
+    resolve / create). An optional first request runs before the loop. Non-TTY
+    without a request refuses and points at `copperhead do`.
+
+copperhead demo [--tour] [--model …] [--dir <path>]
+    Print a short tour of what the agent does (`--tour`), or scaffold
+    `demo-runs/usb-c-breakout/` and run the create pipeline against the
+    packaged USB-C power breakout brief (same as `npm run demo:simple`).
+
 copperhead create --brief brief.md   # Mode A: full pipeline (§2.5)
 copperhead init [--path hardware/]
     Detect .kicad_sch/.kicad_pcb, parse symbols/footprints/nets,
@@ -472,7 +487,7 @@ Format: Given / When / Then. "Fixture" = the open-telegraph repo (or the tiny te
 - **AC-8.5 (run-end addenda on every path)** Every terminal branch (success, refusal, turn-budget, repair-cycles, provider error, stall, commit failure) emits a `run-end` event and a `## Run stats` summary section with: exit path (`done`/`refused`/`turn-budget-exhausted`/`repair-cycles-exhausted`/`commit-failed`/`provider-error`/`stalled`), turns used vs budget, repair cycles used vs budget, token totals + per-turn breakdown, and wall-clock duration; the CLI prints one final outcome line (exit path, verification, commit hash if any, duration, tokens).
 - **AC-8.6 (commit failure is an outcome)** When the end-of-run git commit fails (e.g. `git add -A` exits 128 on an embedded repo), the run rolls back per the snapshot contract and ends with `exitPath: commit-failed`; `summary.md` is still written and names the git error; no unhandled stack trace reaches the user.
 - **AC-8.7 (progress with tokens)** In plain mode, each turn's output is prefixed `[turn k/N · <in> in / <out> out]` with cumulative totals (compact `12.3k` formatting); tool results stay one line each.
-- **AC-8.8 (interactive on a TTY)** With stdout a TTY and neither `--json` nor `--plain`: a bottom-pinned status line redraws in place (spinner while a provider call is in flight, elapsed time, turn counter vs budget, cumulative tokens); assistant text and tool results scroll above it; the final outcome line replaces it; cursor and status line are restored/cleared on exit including Ctrl-C. A renderer reused across runs (the `create` pipeline) renders every stage: each outcome line releases the status line and the next stage re-establishes it.
+- **AC-8.8 (interactive on a TTY)** With stdout a TTY and neither `--json` nor `--plain`: a bottom-pinned status line redraws in place (spinner while a provider call is in flight, elapsed time, turn counter vs budget, cumulative tokens); assistant text and tool results scroll above it; the final outcome line replaces it; cursor and status line are restored/cleared on exit including Ctrl-C. A renderer reused across runs (the `create` pipeline) renders every stage: each outcome line releases the status line and the next stage re-establishes it. Interactive chrome may use muted SGR color (copper accent, dim secondary text, green/amber/red for outcome); color is never required for correctness.
 - **AC-8.9 (plain fallback)** With stdout piped, or `--json`, or the global `--plain` flag: output is line-oriented and contains zero ANSI escape sequences. With `--json`, progress lines go to stderr; stdout carries only the machine-readable result.
 - **AC-8.10 (redaction holds)** A string matching `sk-[A-Za-z0-9_-]+` planted in any metadata field appears redacted in both the persisted `run-start` event and `summary.md` (extends AC-4.1 to the new surfaces).
 

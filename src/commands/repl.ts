@@ -1,0 +1,529 @@
+/**
+ * Interactive agent shell (Claude Code–style). Default when `copperhead` is
+ * invoked with no subcommand on a TTY: prompt → one `do`-equivalent run →
+ * prompt again until /quit.
+ */
+
+import path from 'node:path';
+import { existsSync } from 'node:fs';
+import type { ProgressRenderer } from '../agent/render.js';
+import { copper, dim, err, ok, warn } from '../agent/theme.js';
+import { logoLockup } from '../agent/logo.js';
+import { revealBanner, staggerWrite } from '../agent/animate.js';
+import { runAgentLoop, type BudgetExhaustedStats, type RunResult } from '../agent/loop.js';
+import type { ModelSource } from '../config.js';
+import { loadConfig } from '../config.js';
+import { branchName, headCommit, isDirty, isGitRepo, uncommittedCount } from '../util/git.js';
+import { shortPath } from '../util/paths.js';
+import type { SelectItem } from '../util/select.js';
+import { KeyReader, promptWithSlashHints } from '../util/live-prompt.js';
+import { runCheck } from './check.js';
+import { demoTourText } from './demo.js';
+import {
+  formatBomInspect,
+  formatConfigInspect,
+  formatConstraintsInspect,
+  formatDriftInspect,
+  formatGitInspect,
+  formatLastInspect,
+  formatNetsInspect,
+  formatOpenSpecInspect,
+  formatPartsInspect,
+  formatRunsInspect,
+  formatSyncInspect,
+} from './repl-inspect.js';
+
+export interface ReplOptions {
+  repoRoot: string;
+  model: string;
+  modelSource: ModelSource;
+  version: string;
+  kicadCliVersion: string;
+  maxTurns?: number;
+  /** When set, pause for proposal approval inside each run. */
+  interactive?: boolean;
+  /** Optional first request before the prompt loop. */
+  seed?: string;
+  renderer: ProgressRenderer;
+  log?: (line: string) => void;
+  confirm?: (q: string) => Promise<boolean>;
+  onBudgetExhausted?: (stats: BudgetExhaustedStats) => Promise<number>;
+  /** Override streams (tests). Defaults to stdin/stdout. */
+  input?: NodeJS.ReadableStream;
+  output?: NodeJS.WritableStream;
+  /** Injected runner (tests). Defaults to runAgentLoop. */
+  runRequest?: (request: string) => Promise<Pick<RunResult, 'outcome'>>;
+  /** Injected /check (tests). */
+  runCheckCmd?: () => Promise<void>;
+}
+
+const QUIT = new Set(['/quit', '/exit', '/q']);
+
+/** Slash commands shown in `/` dropdown, `/help`, and tab completion. */
+export const SLASH_COMMANDS: SelectItem[] = [
+  { value: '/demo', label: '/demo', description: 'what copperhead does + how to try it' },
+  { value: '/examples', label: '/examples', description: 'example change-request prompts' },
+  { value: '/status', label: '/status', description: 'repo, git, and config snapshot' },
+  { value: '/check', label: '/check', description: 'ERC + DRC + drift — no LLM' },
+  { value: '/parts', label: '/parts', description: 'refdes / value / footprint from schematic' },
+  { value: '/nets', label: '/nets', description: 'net names and pin attachments' },
+  { value: '/bom', label: '/bom', description: 'parsed docs/BOM.md (read-only)' },
+  { value: '/sync', label: '/sync', description: 'doc↔board inconsistency report (verify only)' },
+  { value: '/drift', label: '/drift', description: 'BOM/PINOUT vs schematic drift' },
+  { value: '/constraints', label: '/constraints', description: 'open constraint registry' },
+  { value: '/openspec', label: '/openspec', description: 'openspec validate (no LLM)' },
+  { value: '/config', label: '/config', description: 'resolved .copperhead/config.json' },
+  { value: '/git', label: '/git', description: 'branch + dirty file list' },
+  { value: '/runs', label: '/runs', description: 'recent .copperhead/runs/' },
+  { value: '/last', label: '/last', description: 'newest run summary preview' },
+  { value: '/model', label: '/model', description: 'show the active model' },
+  { value: '/version', label: '/version', description: 'copperhead / kicad-cli / node' },
+  { value: '/clear', label: '/clear', description: 'clear the screen' },
+  { value: '/help', label: '/help', description: 'list commands' },
+  { value: '/quit', label: '/quit', description: 'leave the shell' },
+];
+
+/** Bare words that must NOT start an agent run (common mistake: `clear` without `/`). */
+const BARE_ALIASES: Record<string, string> = {
+  quit: '/quit',
+  exit: '/quit',
+  q: '/quit',
+  clear: '/clear',
+  cls: '/clear',
+  help: '/help',
+  demo: '/demo',
+  examples: '/examples',
+  status: '/status',
+  check: '/check',
+  parts: '/parts',
+  nets: '/nets',
+  bom: '/bom',
+  sync: '/sync',
+  drift: '/drift',
+  constraints: '/constraints',
+  openspec: '/openspec',
+  config: '/config',
+  git: '/git',
+  runs: '/runs',
+  last: '/last',
+  model: '/model',
+  version: '/version',
+};
+
+/** Parse a slash command; returns null when the line is a normal request. */
+export function parseSlash(line: string): { cmd: string; args: string } | null {
+  const t = line.trim();
+  if (!t) return null;
+
+  // Bare aliases: `quit` / `clear` / … act like their slash forms so a typo
+  // does not kick off a multi-minute agent turn.
+  const bare = BARE_ALIASES[t.toLowerCase()];
+  if (bare) return { cmd: bare, args: '' };
+
+  if (!t.startsWith('/')) return null;
+  // Bare `/` opens the command dropdown.
+  if (t === '/') return { cmd: '/', args: '' };
+  const sp = t.indexOf(' ');
+  if (sp < 0) return { cmd: t.toLowerCase(), args: '' };
+  return { cmd: t.slice(0, sp).toLowerCase(), args: t.slice(sp + 1).trim() };
+}
+
+/** Tab-completion matches for a partial slash command. */
+export function completeSlash(partial: string): string[] {
+  const p = partial.trim().toLowerCase();
+  if (!p.startsWith('/')) return [];
+  return SLASH_COMMANDS.map((c) => c.value).filter((c) => c.startsWith(p));
+}
+
+export { shortPath };
+
+/** Exported for tests. */
+export function helpText(): string {
+  const rows: Array<[string, string]> = [
+    ['/', 'type `/` to see live command suggestions'],
+    ['<request>', 'run one gated agent change (same as `do`)'],
+    ...SLASH_COMMANDS.map((c) => [c.label, c.description ?? ''] as [string, string]),
+  ];
+  const width = Math.max(...rows.map(([cmd]) => cmd.length));
+  return [
+    '',
+    copper('  Commands'),
+    '',
+    ...rows.map(([cmd, desc]) => `  ${copper(cmd.padEnd(width))}  ${dim(desc)}`),
+    '',
+    dim('  Tip: type `/` to filter commands — ↑/↓ + Enter to pick, Tab to complete.'),
+    dim('  Tip: run `copperhead demo` outside the shell for the full USB-C create pipeline.'),
+    '',
+  ].join('\n');
+}
+
+export function examplesText(): string {
+  return [
+    '',
+    copper('  Example prompts'),
+    '',
+    dim('  Drop any of these at the prompt (or use `copperhead do "…"`):'),
+    '',
+    `  ${copper('▸')} add reverse-polarity protection on VIN`,
+    `  ${copper('▸')} rename net KEY_DAH to KEY_DASH`,
+    `  ${copper('▸')} add a power LED on the 3V3 rail`,
+    `  ${copper('▸')} move the key input to a different RTC-capable pin`,
+    `  ${copper('▸')} add ESD diodes on the USB data lines`,
+    '',
+    dim('  Full board-from-brief demo:'),
+    `  ${copper('copperhead demo')}  ${dim('— USB-C power breakout create pipeline')}`,
+    '',
+  ].join('\n');
+}
+
+function metaRow(label: string, value: string): string {
+  return `  ${dim(label.padEnd(10))} ${value}`;
+}
+
+/** Exported for tests. */
+export function banner(opts: ReplOptions): string[] {
+  const repo = shortPath(path.resolve(opts.repoRoot));
+  const cols = (opts.output as NodeJS.WriteStream | undefined)?.columns ?? process.stdout.columns ?? 80;
+  return [
+    ...logoLockup({ version: opts.version, tagline: 'interactive shell', columns: cols }),
+    metaRow('model', `${opts.model}  ${dim(`via ${opts.modelSource}`)}`),
+    metaRow('kicad-cli', opts.kicadCliVersion),
+    metaRow('repo', dim(repo)),
+    '',
+    dim('  Describe a board change in plain English.'),
+    dim('  Type `/` for commands · ↑/↓ to hover (description shows above the list)'),
+    dim('  /quit to leave · Ctrl+C interrupts a running turn'),
+    '',
+  ];
+}
+
+/** phase 1 = bright chevron (pulse peak). */
+function promptPrefix(phase = 0): string {
+  const chevron = phase === 1 ? copper('›') : dim('›');
+  return `${copper('copperhead')} ${chevron} `;
+}
+
+function isTtyStream(input: NodeJS.ReadableStream, output: NodeJS.WritableStream): boolean {
+  return Boolean((input as NodeJS.ReadStream).isTTY) && Boolean((output as NodeJS.WriteStream).isTTY);
+}
+
+async function statusText(opts: ReplOptions): Promise<string> {
+  const repo = path.resolve(opts.repoRoot);
+  const lines = [
+    '',
+    copper('  Status'),
+    '',
+    metaRow('repo', shortPath(repo)),
+    metaRow('model', `${opts.model}  ${dim(`via ${opts.modelSource}`)}`),
+    metaRow('kicad-cli', opts.kicadCliVersion),
+    metaRow('node', process.version),
+  ];
+
+  if (await isGitRepo(repo)) {
+    const [branch, commit, dirty, n] = await Promise.all([
+      branchName(repo).catch(() => 'unknown'),
+      headCommit(repo).catch(() => 'unknown'),
+      isDirty(repo).catch(() => null),
+      uncommittedCount(repo).catch(() => null),
+    ]);
+    const state =
+      dirty === null ? 'unknown' : dirty ? `dirty (${n ?? '?'} file(s))` : ok('clean');
+    lines.push(metaRow('git', `${branch}@${commit.slice(0, 7)}  ${state}`));
+  } else {
+    lines.push(metaRow('git', warn('not a git repository')));
+  }
+
+  try {
+    const config = await loadConfig(repo);
+    lines.push(metaRow('schematic', config.schematic ?? dim('null')));
+    lines.push(metaRow('board', config.board ?? dim('null')));
+    lines.push(metaRow('docs', config.docs));
+    lines.push(metaRow('maxTurns', String(opts.maxTurns ?? config.maxTurns)));
+  } catch {
+    lines.push(metaRow('config', dim('no .copperhead/config.json yet — try `copperhead init`')));
+  }
+
+  if (!existsSync(path.join(repo, '.copperhead'))) {
+    lines.push('');
+    lines.push(dim('  Hint: `copperhead init` scaffolds docs/ from an existing schematic.'));
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+function defaultRunner(opts: ReplOptions, log: (l: string) => void) {
+  return (request: string) =>
+    runAgentLoop({
+      repoRoot: opts.repoRoot,
+      request,
+      model: opts.model,
+      ...(opts.maxTurns !== undefined ? { maxTurns: opts.maxTurns } : {}),
+      allowDirty: true,
+      interactive: opts.interactive ?? false,
+      confirm: opts.confirm,
+      ...(opts.onBudgetExhausted ? { onBudgetExhausted: opts.onBudgetExhausted } : {}),
+      renderer: opts.renderer,
+      log,
+      meta: {
+        command: 'repl',
+        modelSource: opts.modelSource,
+        version: opts.version,
+        kicadCliVersion: opts.kicadCliVersion,
+      },
+    });
+}
+
+/**
+ * Run the interactive shell. Resolves when the user quits.
+ * Returns ok:false when the shell could not start (non-TTY without a usable seed).
+ */
+export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: number }> {
+  const log = opts.log ?? ((l: string) => console.log(l));
+  const input = opts.input ?? process.stdin;
+  const output = opts.output ?? process.stdout;
+  const seed = opts.seed?.trim() || undefined;
+  const tty = isTtyStream(input, output);
+
+  const runOne = opts.runRequest ?? defaultRunner(opts, log);
+  const checkCmd =
+    opts.runCheckCmd ??
+    (async () => {
+      const res = await runCheck(opts.repoRoot, log);
+      log(res.ok ? ok('check: all green') : warn('check: failures reported above'));
+    });
+
+  if (!tty) {
+    if (!seed) {
+      log(
+        err(
+          'copperhead: interactive shell requires a TTY. Use `copperhead do "<request>"` for one-shot runs.',
+        ),
+      );
+      return { ok: false, turns: 0 };
+    }
+    try {
+      const res = await runOne(seed);
+      return { ok: res.outcome !== 'failure', turns: 1 };
+    } catch (e) {
+      log(err((e as Error).message));
+      return { ok: false, turns: 0 };
+    }
+  }
+
+  await revealBanner(banner(opts), log, { out: output as NodeJS.WriteStream });
+
+  let turns = 0;
+  const handleRequest = async (request: string): Promise<void> => {
+    try {
+      const res = await runOne(request);
+      turns++;
+      if (res.outcome === 'failure') {
+        log(dim('(session continues — fix the issue or try another request)'));
+      }
+    } catch (e) {
+      log(err((e as Error).message));
+      log(dim('(session continues)'));
+    }
+  };
+
+  if (seed) {
+    log(`  ${copper('→')} ${seed}`);
+    log('');
+    await handleRequest(seed);
+  }
+
+  const runSlash = async (cmd: string): Promise<'quit' | 'continue'> => {
+    if (QUIT.has(cmd)) {
+      log('');
+      log(dim('  session ended'));
+      return 'quit';
+    }
+    if (cmd === '/help' || cmd === '/h' || cmd === '/?') {
+      await staggerWrite(helpText().split('\n'), log);
+      return 'continue';
+    }
+    if (cmd === '/demo') {
+      await staggerWrite(demoTourText().split('\n'), log);
+      return 'continue';
+    }
+    if (cmd === '/examples') {
+      await staggerWrite(examplesText().split('\n'), log);
+      return 'continue';
+    }
+    if (cmd === '/status') {
+      log(await statusText(opts));
+      return 'continue';
+    }
+    if (cmd === '/version') {
+      log('');
+      log(metaRow('copperhead', opts.version));
+      log(metaRow('kicad-cli', opts.kicadCliVersion));
+      log(metaRow('node', process.version));
+      log('');
+      return 'continue';
+    }
+    if (cmd === '/clear' || cmd === '/cls') {
+      (output as NodeJS.WritableStream).write('\x1b[2J\x1b[H');
+      await revealBanner(banner(opts), log, { out: output as NodeJS.WriteStream });
+      return 'continue';
+    }
+    if (cmd === '/model') {
+      log('');
+      log(metaRow('model', `${opts.model}  ${dim(`via ${opts.modelSource}`)}`));
+      log('');
+      return 'continue';
+    }
+    if (cmd === '/check') {
+      log('');
+      try {
+        await checkCmd();
+      } catch (e) {
+        log(err((e as Error).message));
+      }
+      log('');
+      return 'continue';
+    }
+    if (cmd === '/sync') {
+      try {
+        log(await formatSyncInspect(opts.repoRoot));
+      } catch (e) {
+        log(err((e as Error).message));
+      }
+      return 'continue';
+    }
+    if (cmd === '/drift') {
+      try {
+        log(await formatDriftInspect(opts.repoRoot));
+      } catch (e) {
+        log(err((e as Error).message));
+      }
+      return 'continue';
+    }
+    if (cmd === '/constraints') {
+      try {
+        log(await formatConstraintsInspect(opts.repoRoot));
+      } catch (e) {
+        log(err((e as Error).message));
+      }
+      return 'continue';
+    }
+    if (cmd === '/config') {
+      try {
+        log(await formatConfigInspect(opts.repoRoot));
+      } catch (e) {
+        log(err((e as Error).message));
+      }
+      return 'continue';
+    }
+    if (cmd === '/git') {
+      try {
+        log(await formatGitInspect(opts.repoRoot));
+      } catch (e) {
+        log(err((e as Error).message));
+      }
+      return 'continue';
+    }
+    if (cmd === '/runs') {
+      try {
+        log(await formatRunsInspect(opts.repoRoot));
+      } catch (e) {
+        log(err((e as Error).message));
+      }
+      return 'continue';
+    }
+    if (cmd === '/parts') {
+      try {
+        log(await formatPartsInspect(opts.repoRoot));
+      } catch (e) {
+        log(err((e as Error).message));
+      }
+      return 'continue';
+    }
+    if (cmd === '/nets') {
+      try {
+        log(await formatNetsInspect(opts.repoRoot));
+      } catch (e) {
+        log(err((e as Error).message));
+      }
+      return 'continue';
+    }
+    if (cmd === '/bom') {
+      try {
+        log(await formatBomInspect(opts.repoRoot));
+      } catch (e) {
+        log(err((e as Error).message));
+      }
+      return 'continue';
+    }
+    if (cmd === '/openspec') {
+      try {
+        log(await formatOpenSpecInspect(opts.repoRoot));
+      } catch (e) {
+        log(err((e as Error).message));
+      }
+      return 'continue';
+    }
+    if (cmd === '/last') {
+      try {
+        log(await formatLastInspect(opts.repoRoot));
+      } catch (e) {
+        log(err((e as Error).message));
+      }
+      return 'continue';
+    }
+    log(warn(`  unknown command ${cmd} — type / to see commands`));
+    return 'continue';
+  };
+
+  const keys = new KeyReader(input as NodeJS.ReadStream);
+  const ask = (): Promise<string | null> =>
+    promptWithSlashHints({
+      prompt: promptPrefix(),
+      promptFrame: (phase) => promptPrefix(phase),
+      commands: SLASH_COMMANDS,
+      output: output as NodeJS.WriteStream,
+      readKey: () => keys.next(),
+      drainPrintable: () => keys.drainPrintable(),
+    });
+
+  try {
+    for (;;) {
+      const raw = await ask();
+      if (raw === null) {
+        log('');
+        log(dim('  session ended'));
+        break;
+      }
+      const line = raw.trim();
+      if (!line) continue;
+
+      const slash = parseSlash(line);
+      if (slash) {
+        // Live prompt already resolves bare `/` to a concrete command via Enter.
+        if (slash.cmd === '/') continue;
+        // Echo again above command output so history stays readable after
+        // long tours (/demo) push the prompt line out of the first viewport.
+        log(dim(`  → ${slash.cmd}`));
+        const result = await runSlash(slash.cmd);
+        if (result === 'quit') break;
+        continue;
+      }
+
+      // Pause raw-mode so Ctrl+C is a real SIGINT during the agent turn.
+      log('');
+      log(dim('  (Ctrl+C to interrupt)'));
+      keys.pause();
+      try {
+        await handleRequest(line);
+      } finally {
+        keys.resume();
+      }
+      log('');
+    }
+  } finally {
+    keys.close();
+  }
+
+  return { ok: true, turns };
+}

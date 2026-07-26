@@ -42,6 +42,10 @@ In an existing KiCad repository:
 ```bash
 export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
 copperhead init                # scaffold docs/ from the schematic; idempotent
+copperhead                     # interactive agent shell (Claude Code–style REPL)
+copperhead demo --tour          # what the agent does (no LLM)
+copperhead demo --model cursor # full USB-C breakout create pipeline
+# or one-shot:
 copperhead do "add reverse-polarity protection on VIN"
 copperhead check               # ERC + DRC + doc drift; no LLM, CI-safe
 ```

@@ -3,7 +3,12 @@
  * once at startup: interactive (TTY, no --json/--plain) pins a status line to
  * the bottom of the terminal and redraws it in place; plain emits line-oriented
  * output with zero ANSI escapes — the mode CI, pipes, and tests see.
+ *
+ * Interactive mode adds subtle SGR chrome (copper accent, dim secondary text).
+ * Plain mode never emits color (AC-8.9).
  */
+
+import { copper, dim, setColorEnabled, styleOutcome, toolLine, warn } from './theme.js';
 
 export interface ProgressRenderer {
   log(line: string): void;
@@ -106,20 +111,36 @@ export class InteractiveRenderer implements ProgressRenderer {
   }
 
   private statusText(): string {
-    const parts = [
-      `turn ${this.turn}/${this.maxTurns}`,
-      `${fmtTokens(this.tokensIn)} in / ${fmtTokens(this.tokensOut)} out`,
-      fmtDuration(Date.now() - this.startMs),
-    ];
+    const turn = `turn ${this.turn}/${this.maxTurns}`;
+    const tokens = dim(`${fmtTokens(this.tokensIn)} in / ${fmtTokens(this.tokensOut)} out`);
+    const elapsed = dim(fmtDuration(Date.now() - this.startMs));
+    const parts = [turn, tokens, elapsed];
     if (this.busy) {
       // Fold streamed-output volume into the busy segment so a large turn's
       // status line visibly grows — a hung one stays frozen (5.1).
-      parts.push(this.streamedChars ? `${this.busy} ~${fmtTokens(this.streamedChars)} ch` : this.busy);
+      const busy = this.streamedChars
+        ? `${this.busy} ~${fmtTokens(this.streamedChars)} ch`
+        : this.busy;
+      parts.push(warn(busy));
     }
-    const spinner = this.busy ? FRAMES[this.frame % FRAMES.length] : '·';
-    const line = `${spinner} ${parts.join(' · ')}`;
+    const spinner = this.busy ? copper(FRAMES[this.frame % FRAMES.length]!) : dim('·');
+    const line = `${spinner} ${parts.join(dim(' · '))}`;
+    // Truncate by visible length roughly: strip SGR when measuring so color
+    // codes don't eat the column budget and clip the readable text early.
     const width = this.out.columns ?? 80;
-    return line.length > width ? line.slice(0, width - 1) : line;
+    const visible = line.replace(/\x1b\[[0-9;]*m/g, '');
+    if (visible.length <= width) return line;
+    // Fall back to an uncolored truncated line when the terminal is too narrow.
+    const plain = [
+      this.busy ? FRAMES[this.frame % FRAMES.length]! : '·',
+      turn,
+      `${fmtTokens(this.tokensIn)} in / ${fmtTokens(this.tokensOut)} out`,
+      fmtDuration(Date.now() - this.startMs),
+      ...(this.busy
+        ? [this.streamedChars ? `${this.busy} ~${fmtTokens(this.streamedChars)} ch` : this.busy]
+        : []),
+    ].join(' · ');
+    return plain.length > width ? plain.slice(0, width - 1) : plain;
   }
 
   private redraw(): void {
@@ -162,7 +183,7 @@ export class InteractiveRenderer implements ProgressRenderer {
   }
 
   toolResult(name: string, firstLine: string): void {
-    this.log(`  [${name}] ${firstLine}`);
+    this.log(toolLine(name, firstLine));
   }
 
   status(text: string | null): void {
@@ -181,7 +202,7 @@ export class InteractiveRenderer implements ProgressRenderer {
 
   finish(line: string): void {
     if (this.statusShown) this.out.write(CLEAR_LINE);
-    this.out.write(line + '\n');
+    this.out.write(styleOutcome(line) + '\n');
     this.suspend();
   }
 
@@ -215,7 +236,10 @@ export class InteractiveRenderer implements ProgressRenderer {
  * (AC-2.4): the only thing a --json invocation writes to stdout is its JSON.
  */
 export function makeRenderer(opts: { json: boolean; plain: boolean }): ProgressRenderer {
+  const interactive = !opts.json && !opts.plain && Boolean(process.stdout.isTTY);
+  // Color tracks the interactive path so --plain / pipes stay zero-ANSI (AC-8.9).
+  setColorEnabled(interactive && !process.env.NO_COLOR);
   if (opts.json) return plainRenderer((line) => console.error(line));
-  if (!opts.plain && process.stdout.isTTY) return new InteractiveRenderer();
+  if (interactive) return new InteractiveRenderer();
   return plainRenderer((line) => console.log(line));
 }

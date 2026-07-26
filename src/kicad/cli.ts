@@ -1,4 +1,5 @@
 import { execa, ExecaError } from 'execa';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -13,6 +14,7 @@ export class KicadCliMissingError extends PreflightError {
       [
         'install KiCad ≥ 8: https://www.kicad.org/download/',
         'ensure the kicad-cli binary is on PATH (on macOS it ships inside KiCad.app/Contents/MacOS)',
+        'or set COPPERHEAD_KICAD_CLI=/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli',
         'confirm with "kicad-cli version", then rerun',
       ],
     );
@@ -20,12 +22,85 @@ export class KicadCliMissingError extends PreflightError {
   }
 }
 
+/** Well-known install locations when `kicad-cli` is not on PATH (macOS app bundle). */
+const FALLBACK_BINARIES = [
+  '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli',
+  '/Applications/KiCad-10.0/KiCad.app/Contents/MacOS/kicad-cli',
+  '/Applications/KiCad-9.0/KiCad.app/Contents/MacOS/kicad-cli',
+  '/Applications/KiCad-8.0/KiCad.app/Contents/MacOS/kicad-cli',
+];
+
+let cachedBinary: string | null | undefined;
+
+/**
+ * Resolve the kicad-cli executable: `COPPERHEAD_KICAD_CLI` > PATH name
+ * (`kicad-cli`). On PATH miss, `runKicad` falls back to macOS KiCad.app paths.
+ */
+export function resolveKicadCli(): string {
+  if (cachedBinary !== undefined) {
+    if (cachedBinary === null) throw new KicadCliMissingError();
+    return cachedBinary;
+  }
+  const fromEnv = process.env.COPPERHEAD_KICAD_CLI?.trim();
+  if (fromEnv && existsSync(fromEnv)) {
+    cachedBinary = fromEnv;
+    return fromEnv;
+  }
+  cachedBinary = 'kicad-cli';
+  return cachedBinary;
+}
+
+/** After ENOENT on PATH, retry with a known macOS install path. */
+function fallbackAfterMissing(): string {
+  const fromEnv = process.env.COPPERHEAD_KICAD_CLI?.trim();
+  if (fromEnv && existsSync(fromEnv)) {
+    cachedBinary = fromEnv;
+    return fromEnv;
+  }
+  for (const candidate of FALLBACK_BINARIES) {
+    if (existsSync(candidate)) {
+      cachedBinary = candidate;
+      return candidate;
+    }
+  }
+  cachedBinary = null;
+  throw new KicadCliMissingError();
+}
+
+async function runKicad(args: string[], opts?: { reject?: boolean }): Promise<Awaited<ReturnType<typeof execa>>> {
+  let bin = resolveKicadCli();
+  let res = await execa(bin, args, { reject: false });
+  if (res.failed && (res as unknown as ExecaError).code === 'ENOENT') {
+    if (bin === 'kicad-cli') {
+      bin = fallbackAfterMissing();
+      res = await execa(bin, args, { reject: false });
+    } else {
+      throw new KicadCliMissingError();
+    }
+  }
+  if (opts?.reject === false) return res;
+  if (res.failed && (res as unknown as ExecaError).code === 'ENOENT') {
+    throw new KicadCliMissingError();
+  }
+  if (res.failed) {
+    throw Object.assign(new Error(res.stderr || res.stdout || `kicad-cli exited ${res.exitCode}`), res);
+  }
+  return res;
+}
+
+/** Test helper: clear the resolved-binary cache. */
+export function resetKicadCliCache(): void {
+  cachedBinary = undefined;
+}
+
 export async function kicadCliVersion(): Promise<string> {
   try {
-    const { stdout } = await execa('kicad-cli', ['version']);
-    return stdout.trim();
+    const res = await runKicad(['version']);
+    return String(res.stdout ?? '').trim();
   } catch (err) {
     if ((err as ExecaError).code === 'ENOENT') throw new KicadCliMissingError();
+    // runKicad already maps PATH ENOENT → fallback → KicadCliMissingError
+    if (err instanceof KicadCliMissingError) throw err;
     throw err;
   }
 }
@@ -39,8 +114,7 @@ async function runCheck(
   const out = path.join(dir, `${kind}.json`);
   const sub = kind === 'erc' ? ['sch', 'erc'] : ['pcb', 'drc'];
   try {
-    const res = await execa(
-      'kicad-cli',
+    const res = await runKicad(
       [...sub, '--format', 'json', '--exit-code-violations', '--output', out, ...extraArgs, filePath],
       { reject: false },
     );
@@ -94,7 +168,7 @@ export async function kicadLoadError(filePath: string): Promise<string | null> {
     ? ['sch', 'export', 'netlist', '--output', path.join(dir, 'probe.net'), filePath]
     : ['pcb', 'export', 'pos', '--output', path.join(dir, 'probe.pos'), filePath];
   try {
-    const res = await execa('kicad-cli', args, { reject: false });
+    const res = await runKicad(args, { reject: false });
     if (res.failed && (res as unknown as ExecaError).code === 'ENOENT') throw new KicadCliMissingError();
     if (res.exitCode === 0) return null;
     return [res.stderr, res.stdout].filter(Boolean).join('\n').trim() || `kicad-cli exited ${res.exitCode}`;
@@ -131,9 +205,10 @@ export async function exportFab(pcbPath: string, schPath: string | null, outDir:
   }
   for (const job of jobs) {
     try {
-      await execa('kicad-cli', job.args);
+      await runKicad(job.args);
       result.produced.push(job.artifact);
     } catch (err) {
+      if (err instanceof KicadCliMissingError) throw err;
       if ((err as ExecaError).code === 'ENOENT') throw new KicadCliMissingError();
       result.failed.push({ artifact: job.artifact, reason: String((err as ExecaError).stderr ?? (err as Error).message).slice(0, 200) });
     }
@@ -148,8 +223,9 @@ export async function exportSvg(kind: 'sch' | 'pcb', filePath: string, outDir: s
       ? ['sch', 'export', 'svg', '--output', outDir, filePath]
       : ['pcb', 'export', 'svg', '--output', path.join(outDir, 'board.svg'), '--layers', 'F.Cu,B.Cu,Edge.Cuts', filePath];
   try {
-    await execa('kicad-cli', args);
+    await runKicad(args);
   } catch (err) {
+    if (err instanceof KicadCliMissingError) throw err;
     if ((err as ExecaError).code === 'ENOENT') throw new KicadCliMissingError();
     throw err;
   }
