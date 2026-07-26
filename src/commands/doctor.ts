@@ -184,12 +184,25 @@ export async function runDoctor(opts: RunDoctorOptions): Promise<DoctorReport> {
     config = await loadConfig(opts.repoRoot);
   } catch (err) {
     config = FALLBACK_CONFIG;
-    configError = {
-      name: 'project',
-      status: 'fail',
-      detail: `.copperhead/config.json is malformed: ${(err as Error).message}`,
-      hint: 'fix or delete .copperhead/config.json (rerun `copperhead init`/`copperhead create` to regenerate it).',
-    };
+    // JSON.parse throws a bare SyntaxError for bad content; readFile throws a
+    // coded Error (EACCES, EISDIR, ...) for a file that couldn't be read at
+    // all. The two need different advice: content is fixed by regenerating
+    // the file, unreadable is a permissions/filesystem problem regenerating
+    // it will not solve.
+    configError =
+      err instanceof SyntaxError
+        ? {
+            name: 'project',
+            status: 'fail',
+            detail: `.copperhead/config.json is malformed: ${err.message}`,
+            hint: 'fix or delete .copperhead/config.json (rerun `copperhead init`/`copperhead create` to regenerate it).',
+          }
+        : {
+            name: 'project',
+            status: 'fail',
+            detail: `.copperhead/config.json could not be read: ${(err as Error).message}`,
+            hint: 'check that it is a regular file (not a directory) and that you have permission to read it.',
+          };
   }
   const checks: DoctorCheck[] = [
     nodeCheck(deps.nodeVersion),

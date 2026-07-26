@@ -81,6 +81,23 @@ describe('copperhead doctor', () => {
     }
   });
 
+  it('an unreadable .copperhead/config.json (e.g. EISDIR) gets read-failure advice, not "malformed"', async () => {
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      // A directory at the config path reproduces an fs read error (EISDIR)
+      // distinct from JSON.parse's SyntaxError.
+      await mkdir(path.join(repo, '.copperhead', 'config.json'), { recursive: true });
+      const r = await runDoctor({ repoRoot: repo, model: 'gpt-5', deps: deps({ env: { OPENAI_API_KEY: 'sk-x' } }) });
+      const project = r.checks.find((c) => c.name === 'project')!;
+      expect(project.status).toBe('fail');
+      expect(project.detail).toContain('could not be read');
+      expect(project.detail).not.toContain('malformed');
+      expect(project.hint).toMatch(/permission|directory/i);
+    } finally {
+      await cleanup();
+    }
+  });
+
   it('a saved-login provider needs no key: info, not a failure', async () => {
     const { repo, cleanup } = await tempFixtureRepo();
     try {
