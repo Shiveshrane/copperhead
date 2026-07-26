@@ -20,6 +20,7 @@ import { OpenAIProvider } from './providers/openai.js';
 import { AnthropicProvider } from './providers/anthropic.js';
 import { CodexProvider } from './providers/codex.js';
 import { ClaudeCodeProvider } from './providers/claude-code.js';
+import { CursorProvider } from './providers/cursor.js';
 import { openSynapMemory, type RunRecord, type SynapMemory } from '../memory/synap.js';
 
 /** What the user sees at the moment they decide whether to keep going. */
@@ -100,6 +101,14 @@ export async function makeProvider(model: string, sessionResume = false): Promis
     }
     return new ClaudeCodeProvider(claudeCodeModel, undefined, undefined, sessionResume);
   }
+  // Saved-login Cursor Agent CLI (`agent login`). Matched as its own namespace.
+  if (model === 'cursor' || model.startsWith('cursor:')) {
+    const cursorModel = model.startsWith('cursor:') ? model.slice('cursor:'.length) : undefined;
+    if (cursorModel === '') {
+      throw new Error('cursor model override cannot be empty; use "cursor" or "cursor:<model-id>"');
+    }
+    return new CursorProvider(cursorModel, undefined, sessionResume);
+  }
   if (model === 'claude' || model.startsWith('claude')) {
     return new AnthropicProvider(model === 'claude' ? undefined : model);
   }
@@ -108,7 +117,7 @@ export async function makeProvider(model: string, sessionResume = false): Promis
 
 function otherProvider(current: Provider): Provider | null {
   // Only the two keyed providers fail over to each other. A rate-limited
-  // 'claude-code' run returns null here (no silent fallback to a paid API).
+  // 'claude-code' or 'cursor' run returns null here (no silent fallback to a paid API).
   if (current.name === 'openai' && process.env.ANTHROPIC_API_KEY) return new AnthropicProvider();
   if (current.name === 'anthropic' && process.env.OPENAI_API_KEY) return new OpenAIProvider();
   return null;
@@ -205,9 +214,9 @@ async function runWithMemory(
     finishRequest: null,
   };
 
-  // Session resume for claude-code (1.1) is only correct when the response cache
-  // is off: the cache replays turns a resumed session never saw. So enable it
-  // only when the env flag is set AND config.llmCache is disabled — the same
+  // Session resume for claude-code / cursor is only correct when the response
+  // cache is off: the cache replays turns a resumed session never saw. So enable
+  // it only when the env flag is set AND config.llmCache is disabled — the same
   // condition under which we skip the CachingProvider wrap below.
   const sessionResume = process.env.COPPERHEAD_CC_SESSION_RESUME === '1' && !config.llmCache;
   let provider = opts.provider ?? (await makeProvider(opts.model, sessionResume));
