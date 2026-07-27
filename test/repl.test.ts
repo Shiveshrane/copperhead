@@ -334,6 +334,48 @@ describe('promptWithSlashHints', () => {
   });
 });
 
+describe('session log file', () => {
+  it('mirrors session lines to .copperhead/runs/repl-*.log with keys redacted', async () => {
+    setColorEnabled(false);
+    const repo = await mkdtemp(path.join(tmpdir(), 'copperhead-repl-log-'));
+    try {
+      const { input, output } = fakeTty();
+      const done = runRepl({
+        repoRoot: repo,
+        model: 'gpt-5',
+        modelSource: 'flag',
+        version: '0.7.0',
+        kicadCliVersion: '9.0.0',
+        renderer: plainRenderer(() => {}),
+        input,
+        output,
+        runRequest: vi.fn(async (_req: string, log?: (l: string) => void) => {
+          log?.('leaked sk-SECRET_KEY_123 in output');
+          return { outcome: 'success' as const };
+        }),
+      });
+      await new Promise((r) => setTimeout(r, 30));
+      input.write('do the thing\n');
+      await new Promise((r) => setTimeout(r, 30));
+      input.write('/quit\n');
+      await done;
+
+      const runsDir = path.join(repo, '.copperhead', 'runs');
+      const { readdirSync, readFileSync } = await import('node:fs');
+      const logName = readdirSync(runsDir).find((f) => /^repl-.*\.log$/.test(f));
+      expect(logName).toBeDefined();
+      const text = readFileSync(path.join(runsDir, logName!), 'utf8');
+      expect(text).toContain('copperhead v0.7.0'); // banner captured, SGR stripped
+      expect(text).toContain('do the thing'); // echoed request
+      expect(text).toContain('sk-***'); // AC-4.1 redaction
+      expect(text).not.toContain('sk-SECRET_KEY_123');
+      expect(text).not.toContain('\x1b[');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('demo scaffold', () => {
   it('creates a git repo with config ready for create', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-demo-'));
@@ -387,7 +429,7 @@ describe('runRepl', () => {
       runRequest,
     });
     expect(res).toEqual({ ok: true, turns: 1 });
-    expect(runRequest).toHaveBeenCalledWith('add ESD diodes');
+    expect(runRequest).toHaveBeenCalledWith('add ESD diodes', expect.any(Function));
   });
 
   it('handles /help /demo /examples /model /check /quit on a TTY', async () => {
@@ -494,7 +536,7 @@ describe('runRepl', () => {
 
     const res = await done;
     expect(res).toEqual({ ok: true, turns: 1 });
-    expect(opts.runRequest).toHaveBeenCalledWith('rename net KEY_DAH to KEY_DASH');
+    expect(opts.runRequest).toHaveBeenCalledWith('rename net KEY_DAH to KEY_DASH', expect.any(Function));
     expect(lines.join('\n')).toContain('session ended');
     void output; // keep stream alive for typing
   });

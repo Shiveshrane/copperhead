@@ -100,6 +100,28 @@ export class TerminalDock {
     if (this.last) this.set(this.last.lines, this.last.caret);
   }
 
+  /** Rows available to content above the dock. */
+  contentRows(): number {
+    return Math.max(1, this.rows() - this.dockH);
+  }
+
+  /**
+   * Absolute-paint the whole content region (rows 1..contentRows) from the
+   * given lines — used by history scrolling to show any window of the session
+   * log. Does not touch the DECSC slot or the fence; callers repaint() the
+   * dock afterwards to restore the caret.
+   */
+  paintContent(lines: string[]): void {
+    const rowsN = this.contentRows();
+    const shown = lines.slice(-rowsN).map((l) => truncateVisible(l, this.cols() - 1));
+    let seq = SYNC_ON + HIDE;
+    for (let r = 1; r <= rowsN; r++) {
+      seq += `\x1b[${r};1H\x1b[2K${shown[r - 1] ?? ''}`;
+    }
+    seq += SYNC_OFF;
+    this.out.write(seq);
+  }
+
   /**
    * Write a scrollback line above the dock. With the fence in place a plain
    * write cannot touch the dock rows; if the cursor is parked at the caret,

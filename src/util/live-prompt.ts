@@ -30,6 +30,10 @@ export interface LivePromptOptions {
   status?: () => { left: string; right: string };
   /** Right-aligned meta line just above the input rules (hidden while the menu is open). */
   meta?: () => string;
+  /** Sink for the submitted-line echo (defaults to a raw output write). */
+  echo?: (line: string) => void;
+  /** Session log lines for PgUp/PgDn history scrolling. */
+  history?: () => string[];
 }
 
 /** Visible width ignoring SGR; kept for existing callers/tests. */
@@ -270,6 +274,8 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
   let index = 0;
   /** First Ctrl+C clears the input and arms; a second one exits. */
   let ctrlCArmed = false;
+  /** Lines scrolled up into the session history (0 = live view). */
+  let scrollOffset = 0;
 
   const boxWidth = (): number => Math.max(10, dock.cols() - 1);
 
@@ -300,12 +306,14 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
     const inputLines = inputAreaLines();
     const statusLine = ctrlCArmed
       ? statusBar(`  ${warn('press ctrl+c again to exit')}`, '', w)
-      : opts.status
-        ? (() => {
-            const { left, right } = opts.status!();
-            return statusBar(`  ${left}`, `${right} `, w);
-          })()
-        : null;
+      : scrollOffset > 0
+        ? statusBar(`  ${warn(`history ↑${scrollOffset} · pgup/pgdn scroll · any key returns`)}`, '', w)
+        : opts.status
+          ? (() => {
+              const { left, right } = opts.status!();
+              return statusBar(`  ${left}`, `${right} `, w);
+            })()
+          : null;
 
     // Idle dock is small (meta + rules + input + status) so the content
     // region above stays large. The menu overlays upward on open: the dock
@@ -355,8 +363,16 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
     ]);
     // Commit the submitted line into the content region so history shows
     // what actually ran (e.g. `/demo` picked from the bare-`/` dropdown).
-    output.write(opts.prompt + value + '\n');
+    if (opts.echo) opts.echo(opts.prompt + value);
+    else output.write(opts.prompt + value + '\n');
     return value;
+  };
+
+  /** Repaint the content region at the current history offset. */
+  const paintHistory = (): void => {
+    const hist = opts.history?.() ?? [];
+    const end = Math.max(0, hist.length - scrollOffset);
+    dock.paintContent(hist.slice(Math.max(0, end - dock.contentRows()), end));
   };
 
   renderDock();
@@ -365,6 +381,26 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
     const raw = await opts.readKey();
     if (raw === null) return finish(null);
     const key = normalizeNavKey(raw);
+
+    // PgUp/PgDn scroll the session history in the content region; any other
+    // key snaps back to the live tail.
+    if ((key === '\x1b[5~' || key === '\x1b[6~') && opts.history) {
+      const hist = opts.history();
+      const page = Math.max(1, dock.contentRows() - 2);
+      const maxOff = Math.max(0, hist.length - dock.contentRows());
+      scrollOffset =
+        key === '\x1b[5~'
+          ? Math.min(maxOff, scrollOffset + page)
+          : Math.max(0, scrollOffset - page);
+      paintHistory();
+      renderDock();
+      continue;
+    }
+    if (scrollOffset > 0) {
+      scrollOffset = 0;
+      paintHistory();
+      renderDock();
+    }
 
     if (key === '\x03') {
       if (ctrlCArmed) return finish(null);

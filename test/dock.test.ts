@@ -12,6 +12,7 @@ import {
 import { keySequence, promptWithSlashHints, suggestionLines } from '../src/util/live-prompt.js';
 import { SLASH_COMMANDS } from '../src/commands/repl.js';
 import { animateMarkAt, fiducialBootFrames } from '../src/agent/animate.js';
+import { DockRenderer } from '../src/agent/dock-renderer.js';
 import { fiducialMark } from '../src/agent/logo.js';
 import {
   bold,
@@ -162,6 +163,49 @@ describe('TerminalDock (scroll-region fence)', () => {
     const replay = out.written.slice(before);
     expect(replay).toContain('DOCK-ROW');
     expect(replay).toContain('\x1b[24;3H');
+  });
+});
+
+describe('DockRenderer (pinned observability)', () => {
+  it('emits durable lines and paints the live status inside the dock', () => {
+    setColorEnabled(false);
+    const out = fakeOut(80);
+    const dock = new TerminalDock(out);
+    const lines: string[] = [];
+    const r = new DockRenderer(dock, (l) => lines.push(l), () => ({ meta: '● m', hints: 'h' }));
+    r.turnStart(1, 40, 1200, 300);
+    expect(lines.join('\n')).toContain('[turn 1/40');
+    expect(out.written).toContain('turn 1/40'); // painted in the dock
+    expect(out.written).toMatch(
+      /Routing|Etching|Reflowing|Soldering|Drilling|Plating|Probing|Fluxing|Tinning|Laminating|Silkscreening|Panelizing/,
+    );
+    r.toolResult('run_erc', 'clean');
+    expect(lines.some((l) => l.includes('run_erc'))).toBe(true);
+    r.status('model call');
+    r.heartbeat({ elapsedMs: 5000, streamedChars: 2100 });
+    expect(out.written).toContain('model call');
+    r.finish('done · verified erc');
+    expect(lines[lines.length - 1]).toContain('done');
+  });
+});
+
+describe('history scrolling', () => {
+  it('PgUp shows older lines, any key snaps back to the live tail', async () => {
+    const out = fakeOut(60); // 24 rows
+    const hist = Array.from({ length: 60 }, (_, i) => `line-${i + 1}`);
+    const dock = new TerminalDock(out);
+    const line = await promptWithSlashHints({
+      prompt: '> ',
+      commands: SLASH_COMMANDS,
+      output: out,
+      dock,
+      history: () => hist,
+      readKey: keySequence(['\x1b[5~', 'x', '\r']),
+    });
+    expect(line).toBe('x');
+    expect(out.written).toContain('history ↑');
+    expect(out.written).toContain('line-21'); // scrolled window
+    expect(out.written).toContain('line-60'); // live tail repainted on snap-back
   });
 });
 

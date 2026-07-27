@@ -5,7 +5,7 @@
  */
 
 import path from 'node:path';
-import { existsSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync } from 'node:fs';
 import type { ProgressRenderer } from '../agent/render.js';
 import { bold, copper, dim, err, ok, warn } from '../agent/theme.js';
 import { fiducialMark } from '../agent/logo.js';
@@ -18,6 +18,7 @@ import { shortPath } from '../util/paths.js';
 import { pickModel, type SelectItem } from '../util/select.js';
 import { KeyReader, promptWithSlashHints } from '../util/live-prompt.js';
 import { TerminalDock } from '../util/dock.js';
+import { DockRenderer } from '../agent/dock-renderer.js';
 import { callout } from '../agent/box.js';
 import { runCheck } from './check.js';
 import { demoTourText } from './demo.js';
@@ -53,10 +54,12 @@ export interface ReplOptions {
   /** Override streams (tests). Defaults to stdin/stdout. */
   input?: NodeJS.ReadableStream;
   output?: NodeJS.WritableStream;
-  /** Injected runner (tests). Defaults to runAgentLoop. */
-  runRequest?: (request: string) => Promise<Pick<RunResult, 'outcome'>>;
+  /** Injected runner (tests / demo). Defaults to runAgentLoop. The second
+   *  argument is the session logger: lines written through it land in the
+   *  content region and the scrollable history. */
+  runRequest?: (request: string, log?: (line: string) => void) => Promise<Pick<RunResult, 'outcome'>>;
   /** Injected /check (tests). */
-  runCheckCmd?: () => Promise<void>;
+  runCheckCmd?: (log?: (line: string) => void) => Promise<void>;
 }
 
 const QUIT = new Set(['/quit', '/exit', '/q']);
@@ -292,7 +295,37 @@ function defaultRunner(opts: ReplOptions, log: (l: string) => void) {
  * Returns ok:false when the shell could not start (non-TTY without a usable seed).
  */
 export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: number }> {
-  const log = opts.log ?? ((l: string) => console.log(l));
+  const baseLog = opts.log ?? ((l: string) => console.log(l));
+  // Every durable content line lands in the session history so PgUp/PgDn can
+  // scroll back through it (the alt screen has no native scrollback), and is
+  // mirrored to a session log file by default (plain text, keys redacted per
+  // AC-4.1). Injected loggers (tests/embeds) own their sinks: no file then.
+  const history: string[] = [];
+  const HISTORY_CAP = 5000;
+  const SGR_RE = /\x1b\[[0-9;]*m/g;
+  let logFile: { write(chunk: string): unknown; end(): void } | null = null;
+  let logFilePath: string | null = null;
+  const fileLine = (l: string): void => {
+    try {
+      if (!logFile) {
+        const dir = path.join(path.resolve(opts.repoRoot), '.copperhead', 'runs');
+        mkdirSync(dir, { recursive: true });
+        logFilePath = path.join(dir, `repl-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
+        logFile = createWriteStream(logFilePath, { flags: 'a' });
+      }
+      logFile.write(l.replace(SGR_RE, '').replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***') + '\n');
+    } catch {
+      // Best-effort: the shell never fails because the log file cannot.
+    }
+  };
+  const log = (l: string): void => {
+    for (const line of String(l).split('\n')) {
+      history.push(line);
+      if (!opts.log) fileLine(line);
+    }
+    if (history.length > HISTORY_CAP) history.splice(0, history.length - HISTORY_CAP);
+    baseLog(l);
+  };
   const input = opts.input ?? process.stdin;
   const output = opts.output ?? process.stdout;
   const seed = opts.seed?.trim() || undefined;
@@ -316,7 +349,7 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
       return { ok: false, turns: 0 };
     }
     try {
-      const res = await runOne(seed);
+      const res = await runOne(seed, log);
       return { ok: res.outcome !== 'failure', turns: 1 };
     } catch (e) {
       log(err((e as Error).message));
@@ -351,7 +384,7 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
   let turns = 0;
   const handleRequest = async (request: string): Promise<void> => {
     try {
-      const res = await runOne(request);
+      const res = await runOne(request, log);
       turns++;
       if (res.outcome === 'failure') {
         log(dim('(session continues — fix the issue or try another request)'));
@@ -431,7 +464,7 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
     if (cmd === '/check') {
       log('');
       try {
-        await checkCmd();
+        await checkCmd(log);
       } catch (e) {
         log(err((e as Error).message));
       }
@@ -545,6 +578,9 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
   };
   await refreshGit();
 
+  const metaLine = (): string =>
+    `${copper('●')} ${dim([opts.model, gitSeg].filter(Boolean).join(' · '))}`;
+
   let asked = 0;
   const ask = (): Promise<string | null> => {
     const example = EXAMPLE_REQUESTS[asked++ % EXAMPLE_REQUESTS.length]!;
@@ -555,14 +591,23 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
       dock,
       placeholder: `Try "${example}"`,
       status: () => ({
-        left: dim('/ for commands · tab to complete · ctrl+c twice to quit'),
+        left: dim('/ for commands · pgup history · ctrl+c twice to quit'),
         right: dim(`In ${path.basename(path.resolve(opts.repoRoot))}`),
       }),
-      meta: () => `${copper('●')} ${dim([opts.model, gitSeg].filter(Boolean).join(' · '))}`,
+      meta: metaLine,
+      echo: (line) => log(line),
+      history: () => history,
       readKey: () => keys.next(),
       drainPrintable: () => keys.drainPrintable(),
     });
   };
+
+  // Agent turns render through the dock too: durable lines into the content
+  // region + history, the live observability row pinned inside the dock.
+  opts.renderer = new DockRenderer(dock, log, () => ({
+    meta: metaLine(),
+    hints: dim('ctrl+c interrupts the run · output above scrolls into history'),
+  }));
 
   // The banner mark sits at screen rows 2-4 (row 1 is the blank line after
   // the alt-screen clear); pulse it once the first prompt has painted.
@@ -616,6 +661,9 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
   // Printed after the screen restore, so it lands in the normal buffer where
   // the user's shell resumes.
   log(dim('  copperhead session ended'));
+  if (logFilePath) log(dim(`  session log: ${shortPath(logFilePath)}`));
+  // Cast: TS narrows the closure-assigned handle to its initializer here.
+  (logFile as { end(): void } | null)?.end();
 
   return { ok: true, turns };
 }

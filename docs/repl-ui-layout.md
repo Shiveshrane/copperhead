@@ -24,7 +24,7 @@ function in `src/agent/theme.ts`, so color changes are one-line edits.
 27|──────────────────────────────────────────────────────────────────────  <- rule[dim], full width
 28|❯ Try "add reverse-polarity protection on VIN"                          <- prompt[copper]+nbsp, caret = real cursor, placeholder[dim] typed[bright]
 29|──────────────────────────────────────────────────────────────────────  <- rule[dim], full width
-30|  / for commands · tab to complete · ctrl+c twice to quit         In copperhead   <- left[dim]  right[dim]
+30|  / for commands · pgup history · ctrl+c twice to quit         In copperhead   <- left[dim]  right[dim]
 ```
 
 ## State 2: slash menu open (overlays upward, input row never moves)
@@ -37,19 +37,36 @@ function in `src/agent/theme.ts`, so color changes are one-line edits.
 27|──────────────────────────────────────────────────────────────────────  <- rule[dim]
 28|❯ /                                                                     <- typed filter[bright]
 29|──────────────────────────────────────────────────────────────────────  <- rule[dim]
-30|  / for commands · tab to complete · ctrl+c twice to quit         In copperhead
+30|  / for commands · pgup history · ctrl+c twice to quit         In copperhead
 ```
 
-## State 3: agent turn running (dock stays, fence keeps output above)
+## State 3: agent turn running (observability row pinned in the dock)
 
 ```text
+26|                                                     ● claude · main*   <- meta stays
 27|──────────────────────────────────────────────────────────────────────
-28|  … working — ctrl+c interrupts                                         <- busy row[dim]
+28|⠹ Reflowing.. · turn 2/40 · 1.2k in / 300 out · 12s · model call        <- spinner+word[copper] stats[dim] busy[warn]
 29|──────────────────────────────────────────────────────────────────────
-30|  / for commands · tab to complete · ctrl+c twice to quit         In copperhead
+30|  ctrl+c interrupts the run · output above scrolls into history
 ```
 
+The working word is a PCB term (Routing, Etching, Reflowing, Soldering,
+Drilling, Plating, Probing, Fluxing, Tinning, Laminating, Silkscreening,
+Panelizing), one per turn, with animated dots: Claude Code's working verbs,
+board-shop edition. Durable output (tool lines, turn markers, the outcome)
+scrolls in the content region; the observability row never moves. Between
+submit and the first turn a passive `… working` row shows briefly.
+
 First Ctrl+C at the prompt: input clears, row 30 becomes `press ctrl+c again to exit` [warn].
+
+History: every content line is kept in a session buffer (cap 5000). PgUp at
+the prompt scrolls the content region back through it, PgDn scrolls forward,
+any other key snaps back to the live tail; row 30 shows
+`history ↑N · pgup/pgdn scroll · any key returns` while scrolled. The same
+lines are mirrored by default to `.copperhead/runs/repl-<timestamp>.log`
+(plain text: SGR stripped, `sk-` keys redacted per AC-4.1); the path is
+printed when the session ends. Injected loggers (tests/embeds) disable the
+file sink.
 
 Startup: the full screen loads instantly (banner, callout, input dock), then
 the mark pulses in place twice over rows 2-4 (dot, thin ring, thick
