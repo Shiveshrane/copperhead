@@ -41,11 +41,11 @@ Once the user answers, perform the following actions:
      ```bash
      npm ci && npm run build && npm link
      ```
-   * **On macOS/Linux (outside checkout):** If `install.sh` is present in the repository, run:
+   * **On macOS/Linux (outside checkout):** If `install.sh` is present in the repository, **first ask the user for explicit permission to run it**. If approved, run:
      ```bash
      ./install.sh --yes
      ```
-     If `install.sh` is missing or fails, fall back to:
+     If they decline, or if `install.sh` is missing/fails, fall back to:
      ```bash
      npm install -g copperhead
      ```
@@ -72,6 +72,8 @@ Once the user answers, perform the following actions:
 ---
 
 ## 4. Repository Hygiene
+First, check if `.env` or `.copperhead/runs/` are already tracked by Git (e.g. by running `git ls-files .env`). If either is tracked, warn the user and untrack them using `git rm --cached <file>`.
+
 Ensure the repository's `.gitignore` contains the following lines to prevent configuration leakage and local run logs from being committed:
 ```gitignore
 .env
@@ -92,7 +94,7 @@ As an AI agent, you must adhere to these safety boundaries:
 
 ## 6. Final Report Format
 End your turn with a concise 3-4 sentence response:
-1. Confirm that `copperhead` is successfully installed and state the resolved model backend.
+1. Confirm the installation status of `copperhead` (state if successful or if blocked by issues) and state the resolved model backend.
 2. Summarize what `copperhead doctor` reported.
-3. Summarize what `copperhead check` reported (e.g., whether ERC/DRC or doc drift was found).
-4. Provide the exact command the user should run next (e.g., `copperhead do "rename net..."` or `copperhead create --brief brief.md`).
+3. Summarize what `copperhead check` reported (or what blocked it from running).
+4. If installation or verification failed (e.g. missing `kicad-cli`), do NOT suggest running `copperhead do` or `copperhead create`. Instead, provide the exact steps the user should take to fix the blocker. If successful, provide the exact command the user should run next (e.g., `copperhead do "rename net..."` or `copperhead create --brief brief.md`).

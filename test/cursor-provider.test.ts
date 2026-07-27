@@ -266,7 +266,7 @@ describe('CursorProvider — defaultCursorRun subprocess', () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'copperhead-cursor-stub-'));
     const argvFile = path.join(dir, 'argv.txt');
     const stdinFile = path.join(dir, 'stdin.txt');
-    const stubJs = path.join(dir, 'stub-agent.js');
+    const stubJs = path.join(dir, 'stub-agent.mjs');
     await writeFile(
       stubJs,
       `import fs from 'node:fs';

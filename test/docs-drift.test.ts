@@ -7,18 +7,17 @@ describe('agent install prompt drift check', () => {
     const rootPath = path.resolve(__dirname, '../agent-install-prompt.md');
     const docsPath = path.resolve(__dirname, '../docs/src/content/docs/getting-started/agent-install.md');
 
-    const rootContent = (await readFile(rootPath, 'utf8')).trim();
+    const rootContent = await readFile(rootPath, 'utf8');
     const docsContentRaw = await readFile(docsPath, 'utf8');
 
     // Strip Jekyll/Astro frontmatter from the docs file:
     // Frontmatter is enclosed between the first and second occurrences of '---' at the top.
     const frontmatterRegex = /^---\r?\n[\s\S]*?\r?\n---\r?\n/;
-    const docsContent = docsContentRaw.replace(frontmatterRegex, '').trim();
+    const docsContent = docsContentRaw.replace(frontmatterRegex, '');
 
-    // Standardize newlines to prevent cross-platform CRLF vs LF failures
-    const normalizedRoot = rootContent.replace(/\r\n/g, '\n');
-    const normalizedDocs = docsContent.replace(/\r\n/g, '\n');
+    // Standardize newlines and strip leading/trailing newlines to prevent cross-platform CRLF vs LF failures
+    const normalize = (str: string) => str.replace(/\r\n/g, '\n').replace(/^\n+/, '').replace(/\n+$/, '');
 
-    expect(normalizedDocs).toBe(normalizedRoot);
+    expect(normalize(docsContent)).toBe(normalize(rootContent));
   });
 });
