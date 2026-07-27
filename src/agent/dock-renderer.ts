@@ -106,7 +106,8 @@ export class DockRenderer implements ProgressRenderer {
     if (this.timer) return;
     this.timer = setInterval(() => {
       this.frame++;
-      if (this.morph >= 0) this.morph++;
+      // Sweep three positions per tick: a full word crossfade in under a second.
+      if (this.morph >= 0) this.morph += 3;
       this.paint();
     }, 120);
     this.timer.unref?.();
@@ -172,7 +173,7 @@ export class DockRenderer implements ProgressRenderer {
     this.dock.set([
       ...(meta ? [statusBar('', `${meta} `, w)] : []),
       rule(w),
-      `${spinner} ${word} ${dim('· ')}${parts.join(dim(' · '))}`,
+      statusBar('', `${spinner} ${word} ${dim('· ')}${parts.join(dim(' · '))} `, w),
       rule(w),
       ...(hints ? [statusBar(`  ${hints}`, '', w)] : []),
     ]);
