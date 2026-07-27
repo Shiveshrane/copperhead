@@ -9,9 +9,9 @@ function in `src/agent/theme.ts`, so color changes are one-line edits.
 
 ```text
  1|                                                                        <- blank
- 2|   ▄▟▙▄     copperhead v0.7.0                                           <- mark[copper]  name[bold] version[dim]
- 3| ███  ███   claude via flag · kicad-cli 9.0.4                           <- mark[copper]  meta[dim]
- 4|   ▀▜▛▀     ~/Github/chouhan-industries/copperhead                      <- mark[copper]  cwd[dim]
+ 2| ▗▟██▙▖     copperhead v0.7.0                                           <- mark[copper]  name[bold] version[dim]
+ 3| ██  ██     claude via flag · kicad-cli 9.0.4                           <- mark[copper]  meta[dim]
+ 4| ▝▜██▛▘     ~/Github/chouhan-industries/copperhead                      <- mark[copper]  cwd[dim]
  5|                                                                        <- blank
  6| ▎ New repository?                                                      <- bar[copper] title[copper]
  7| ▎  `copperhead init` scaffolds docs/ from an existing schematic        <- bar[copper] body[default]
@@ -51,10 +51,11 @@ function in `src/agent/theme.ts`, so color changes are one-line edits.
 
 First Ctrl+C at the prompt: input clears, row 30 becomes `press ctrl+c again to exit` [warn].
 
-First run in a repo (no `.copperhead/` yet): the boot animation plays slowly
-(fiducial power-on pulsed three times, then a deliberate banner cascade) and
-the New repository callout is shown. Later runs use the quick reveal (same
-three pulses, fast) and hide the callout.
+Startup: the full screen loads instantly (banner, callout, input dock), then
+the mark pulses in place three times over rows 2-4 (dot, thin ring, thick
+ring, full via) while the prompt is already usable. First run in a repo (no
+`.copperhead/` yet) uses slow timing (320ms/frame) and shows the New
+repository callout; later runs pulse fast (140ms/frame) and hide it.
 
 ## Color tokens (src/agent/theme.ts)
 

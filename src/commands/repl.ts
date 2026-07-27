@@ -9,7 +9,7 @@ import { existsSync } from 'node:fs';
 import type { ProgressRenderer } from '../agent/render.js';
 import { bold, copper, dim, err, ok, warn } from '../agent/theme.js';
 import { fiducialMark } from '../agent/logo.js';
-import { revealBanner, staggerWrite } from '../agent/animate.js';
+import { animateMarkAt, staggerWrite } from '../agent/animate.js';
 import { runAgentLoop, type BudgetExhaustedStats, type RunResult } from '../agent/loop.js';
 import type { ModelSource } from '../config.js';
 import { loadConfig } from '../config.js';
@@ -342,9 +342,11 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
   process.on('SIGINT', onSigint);
   process.once('exit', restoreScreen);
 
-  // First run in a repo (no .copperhead/ yet): play the reveal slowly.
+  // Load the full screen first (banner now, dock right after); the mark
+  // animation plays in place once the prompt is up. First run in a repo
+  // (no .copperhead/ yet) uses the slow, recordable timing.
   const firstRun = !existsSync(path.join(path.resolve(opts.repoRoot), '.copperhead'));
-  await revealBanner(banner(opts), log, { out: output as NodeJS.WriteStream, slow: firstRun });
+  for (const line of banner(opts)) log(line);
 
   let turns = 0;
   const handleRequest = async (request: string): Promise<void> => {
@@ -394,7 +396,7 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
     }
     if (cmd === '/clear' || cmd === '/cls') {
       (output as NodeJS.WritableStream).write('\x1b[2J\x1b[H');
-      await revealBanner(banner(opts), log, { out: output as NodeJS.WriteStream });
+      for (const line of banner(opts)) log(line);
       return 'continue';
     }
     if (cmd === '/model') {
@@ -542,9 +544,20 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
     });
   };
 
+  // The banner mark sits at screen rows 2-4 (row 1 is the blank line after
+  // the alt-screen clear); pulse it once the first prompt has painted.
+  let markAnimated = false;
+
   try {
     for (;;) {
-      const raw = await ask();
+      const pending = ask();
+      if (!markAnimated) {
+        markAnimated = true;
+        void animateMarkAt(output as NodeJS.WriteStream, 2, { slow: firstRun }).then(() =>
+          dock.repaint(),
+        );
+      }
+      const raw = await pending;
       if (raw === null) break;
       const line = raw.trim();
       if (!line) continue;

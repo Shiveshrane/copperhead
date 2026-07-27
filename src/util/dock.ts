@@ -27,6 +27,8 @@ export class TerminalDock {
    * (the DECSC slot then holds the content-region position to return to).
    */
   private parked = false;
+  /** Last set() payload, replayable after an external overdraw (animations). */
+  private last: { lines: string[]; caret?: { row: number; col: number } } | null = null;
 
   constructor(private readonly out: NodeJS.WriteStream) {}
 
@@ -90,6 +92,12 @@ export class TerminalDock {
     seq += SHOW + SYNC_OFF;
     this.out.write(seq);
     this.dockH = newH;
+    this.last = caret ? { lines, caret } : { lines };
+  }
+
+  /** Replay the last set() (e.g. after an animation overdrew part of the screen). */
+  repaint(): void {
+    if (this.last) this.set(this.last.lines, this.last.caret);
   }
 
   /**
@@ -126,5 +134,6 @@ export class TerminalDock {
     seq += RESTORE + SHOW + SYNC_OFF;
     this.out.write(seq);
     this.dockH = 0;
+    this.last = null;
   }
 }

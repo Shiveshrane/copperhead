@@ -18,70 +18,47 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-const CLEAR = '\r\x1b[2K';
-const SHOW = '\x1b[?25h';
 const HIDE = '\x1b[?25l';
 
 /** Growing fiducial frames (3 rows), converging on the block mark. Exported for tests. */
 export function fiducialBootFrames(): string[][] {
   return [
-    ['        ', '   ▄▄   ', '        '],
-    ['  ▄▄▄▄  ', '  █  █  ', '  ▀▀▀▀  '],
-    ['  ▄▟▙▄  ', ' ██  ██ ', '  ▀▜▛▀  '],
-    ['  ▄▟▙▄  ', '███  ███', '  ▀▜▛▀  '],
+    ['        ', '   ██   ', '        '],
+    ['  ▗▄▄▖  ', '  █  █  ', '  ▝▀▀▘  '],
+    [' ▗▟▄▄▙▖ ', ' ██  ██ ', ' ▝▜▀▀▛▘ '],
+    [' ▗▟██▙▖ ', ' ██  ██ ', ' ▝▜██▛▘ '],
   ].map((frame) => frame.map((row) => copper(row)));
 }
 
 /**
- * Startup reveal: fiducial power-on, then cascade the real banner lines.
- * `slow` (first run in a repo) stretches the timings for a deliberate,
- * recordable intro; later runs keep the quick version.
+ * Pulse the fiducial mark in place over the already-rendered banner (rows
+ * `topRow..topRow+2`, column 1). The full screen loads first; this animates
+ * after, three grow cycles ending on the final mark. Frames are constant
+ * width so they overwrite each other without clearing the banner text
+ * beside them. Deliberately avoids DECSC/DECRC: the dock owns that slot for
+ * its caret-parking protocol; the caller repaints the dock afterwards to
+ * restore the caret.
  */
-export async function revealBanner(
-  lines: string[],
-  write: (line: string) => void,
-  opts?: { out?: NodeJS.WriteStream; slow?: boolean },
+export async function animateMarkAt(
+  out: NodeJS.WriteStream,
+  topRow: number,
+  opts?: { slow?: boolean },
 ): Promise<void> {
-  const out = opts?.out ?? process.stdout;
-
-  if (!prefersAnimation()) {
-    for (const line of lines) write(line);
-    return;
-  }
-
-  const frameMs = opts?.slow ? 220 : 50;
-  const holdMs = opts?.slow ? 500 : 90;
-  const lineMs = (line: string): number =>
-    line.trim() === '' ? (opts?.slow ? 20 : 6) : opts?.slow ? 55 : 15;
-
-  out.write(HIDE);
-  try {
-    // Fiducial power-on pulsed three times (in-place), then erase and cascade
-    // the real banner so scrollback keeps one clean lockup — not boot frames.
-    const frames = fiducialBootFrames();
-    out.write('\n');
-    for (const row of frames[0]!) out.write(CLEAR + row + '\n');
-    for (let cycle = 0; cycle < 3; cycle++) {
-      for (let i = cycle === 0 ? 1 : 0; i < frames.length; i++) {
-        await sleep(frameMs);
-        out.write(`\x1b[${frames[i]!.length}A`);
-        for (const row of frames[i]!) out.write(CLEAR + row + '\n');
-      }
+  if (!prefersAnimation()) return;
+  const frames = fiducialBootFrames();
+  const frameMs = opts?.slow ? 320 : 140;
+  const holdMs = opts?.slow ? 700 : 300;
+  for (let cycle = 0; cycle < 3; cycle++) {
+    for (const frame of frames) {
+      let seq = HIDE;
+      frame.forEach((row, i) => {
+        seq += `\x1b[${topRow + i};1H${row}`;
+      });
+      out.write(seq);
+      await sleep(frameMs);
     }
-    await sleep(holdMs);
-
-    // Erase boot block: leading newline + 3 mark rows.
-    out.write('\x1b[4A');
-    for (let i = 0; i < 4; i++) out.write(CLEAR + (i < 3 ? '\n' : ''));
-    out.write('\x1b[3A\r');
-
-    for (const line of lines) {
-      write(line);
-      await sleep(lineMs(line));
-    }
-  } finally {
-    out.write(SHOW);
   }
+  await sleep(holdMs);
 }
 
 /** Copper horizontal rule (PCB-trace vibe). */
