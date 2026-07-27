@@ -54,8 +54,8 @@ First Ctrl+C at the prompt: input clears, row 30 becomes `press ctrl+c again to 
 Startup: the full screen loads instantly (banner, callout, input dock), then
 the mark pulses in place three times over rows 2-4 (dot, thin ring, thick
 ring, full via) while the prompt is already usable. First run in a repo (no
-`.copperhead/` yet) uses slow timing (240ms/frame) and shows the New
-repository callout; later runs pulse fast (100ms/frame) and hide it.
+`.copperhead/` yet) uses slow timing (150ms/frame) and shows the New
+repository callout; later runs pulse fast (60ms/frame) and hide it.
 
 ## Color tokens (src/agent/theme.ts)
 

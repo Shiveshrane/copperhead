@@ -46,8 +46,8 @@ export async function animateMarkAt(
 ): Promise<void> {
   if (!prefersAnimation()) return;
   const frames = fiducialBootFrames();
-  const frameMs = opts?.slow ? 240 : 100;
-  const holdMs = opts?.slow ? 500 : 200;
+  const frameMs = opts?.slow ? 150 : 60;
+  const holdMs = opts?.slow ? 300 : 120;
   for (let cycle = 0; cycle < 3; cycle++) {
     for (const frame of frames) {
       let seq = HIDE;
