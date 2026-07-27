@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { DEFAULTS, loadConfig, resolveModel, type CopperheadConfig } from '../config.js';
 import { kicadCliVersion } from '../kicad/cli.js';
+import { redactSecrets } from '../util/redact.js';
 
 const execFileP = promisify(execFile);
 
@@ -97,43 +98,49 @@ async function gitCheck(probe: () => Promise<string>): Promise<DoctorCheck> {
  * offline, so they report `info` (which does not block `ok`).
  */
 export function checkCredential(model: string, env: NodeJS.ProcessEnv): DoctorCheck {
-  if (model === 'codex' || model.startsWith('codex:')) {
-    return {
-      name: 'provider',
-      status: 'info',
-      detail: `${model} -> codex: uses local Codex login (not verified offline)`,
-    };
-  }
-  if (model === 'claude-code' || model.startsWith('claude-code:')) {
-    return {
-      name: 'provider',
-      status: 'info',
-      detail: `${model} -> claude-code: uses Claude Code login (not verified offline)`,
-    };
-  }
-  if (model === 'cursor' || model.startsWith('cursor:')) {
-    return {
-      name: 'provider',
-      status: 'info',
-      detail: `${model} -> cursor: uses Cursor Agent CLI login (not verified offline)`,
-    };
+  // A pasted API key can end up as the model value (--model sk-..., a stray
+  // COPPERHEAD_MODEL); redact it before it reaches the report, same policy as
+  // transcripts (AC-4.1). Routing below still uses the raw value.
+  const shown = redactSecrets(model);
+  const savedLogin: Record<string, string> = {
+    codex: 'uses local Codex login',
+    'claude-code': 'uses Claude Code login',
+    cursor: 'uses Cursor Agent CLI login',
+  };
+  for (const [prefix, how] of Object.entries(savedLogin)) {
+    if (model === prefix || model.startsWith(`${prefix}:`)) {
+      // makeProvider rejects an empty override; a real run would fail here.
+      if (model === `${prefix}:`) {
+        return {
+          name: 'provider',
+          status: 'fail',
+          detail: `${shown} -> ${prefix}: empty model override`,
+          hint: `use "${prefix}" or "${prefix}:<model-id>".`,
+        };
+      }
+      return {
+        name: 'provider',
+        status: 'info',
+        detail: `${shown} -> ${prefix}: ${how} (not verified offline)`,
+      };
+    }
   }
   if (model === 'claude' || model.startsWith('claude')) {
     return env.ANTHROPIC_API_KEY
-      ? { name: 'provider', status: 'ok', detail: `${model} -> anthropic: ANTHROPIC_API_KEY set` }
+      ? { name: 'provider', status: 'ok', detail: `${shown} -> anthropic: ANTHROPIC_API_KEY set` }
       : {
           name: 'provider',
           status: 'fail',
-          detail: `${model} -> anthropic: ANTHROPIC_API_KEY not set`,
+          detail: `${shown} -> anthropic: ANTHROPIC_API_KEY not set`,
           hint: 'export ANTHROPIC_API_KEY=... (or use --model claude-code for saved login).',
         };
   }
   return env.OPENAI_API_KEY
-    ? { name: 'provider', status: 'ok', detail: `${model} -> openai: OPENAI_API_KEY set` }
+    ? { name: 'provider', status: 'ok', detail: `${shown} -> openai: OPENAI_API_KEY set` }
     : {
         name: 'provider',
         status: 'fail',
-        detail: `${model} -> openai: OPENAI_API_KEY not set`,
+        detail: `${shown} -> openai: OPENAI_API_KEY not set`,
         hint: 'export OPENAI_API_KEY=... (or use --model codex for saved login).',
       };
 }

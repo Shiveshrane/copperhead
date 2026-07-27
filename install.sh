@@ -193,7 +193,17 @@ elif ! command -v npm >/dev/null 2>&1; then
   MISSING=1
 elif in_repo_checkout; then
   info "running from a copperhead source checkout"
-  if confirm "build from source and link it globally (npm install && npm run build && npm link)?"; then
+  if ! confirm "build from source and link it globally (npm install && npm run build && npm link)?"; then
+    info "skipped; install later with: npm install && npm run build && npm link"
+    MISSING=1
+  # Refuse to build a dirty checkout: npm install may rewrite package-lock.json,
+  # and a linked binary should correspond to a committed state. Print the
+  # commands instead of acting (conservative-by-design contract).
+  elif git rev-parse --is-inside-work-tree >/dev/null 2>&1 && [ -n "$(git status --porcelain)" ]; then
+    fail "this checkout has uncommitted changes; refusing to build and link from a dirty tree"
+    info "commit or stash them, then rerun; or build manually: npm install && npm run build && npm link"
+    MISSING=1
+  else
     npm install
     npm run build
     if npm link; then
@@ -209,14 +219,17 @@ elif in_repo_checkout; then
       info "either fix the prefix (https://docs.npmjs.com/resolving-eacces-permissions-errors) or run it in place: node dist/cli.js"
       MISSING=1
     fi
-  else
-    info "skipped; install later with: npm install && npm run build && npm link"
-    MISSING=1
   fi
 else
   if confirm "install copperhead globally (npm install -g copperhead)?"; then
     if npm install -g copperhead; then
-      ok "installed: $(copperhead --version 2>/dev/null) -> $(command -v copperhead)"
+      hash -r 2>/dev/null || true
+      if command -v copperhead >/dev/null 2>&1; then
+        ok "installed: copperhead $(copperhead --version 2>/dev/null || true) -> $(command -v copperhead)"
+      else
+        info "installed into $(npm prefix -g)/bin, which is not on PATH; add it or use npx: npx copperhead check"
+        MISSING=1
+      fi
     else
       fail "npm install -g failed (usually a permissions issue with the global npm prefix)"
       info "either fix the prefix (https://docs.npmjs.com/resolving-eacces-permissions-errors) or use npx: npx copperhead check"

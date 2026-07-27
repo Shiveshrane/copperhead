@@ -132,6 +132,23 @@ describe('copperhead doctor', () => {
     expect(checkCredential('cursor:gpt-5', {}).status).toBe('info');
   });
 
+  it('an empty saved-login override fails like makeProvider would, not info', () => {
+    for (const model of ['codex:', 'claude-code:', 'cursor:']) {
+      const c = checkCredential(model, {});
+      expect(c.status).toBe('fail');
+      expect(c.hint).toContain(`${model}<model-id>`);
+    }
+    expect(checkCredential('codex', {}).status).toBe('info');
+    expect(checkCredential('claude-code', {}).status).toBe('info');
+  });
+
+  it('a secret-shaped model value is redacted from the report', () => {
+    const c = checkCredential('sk-proj-abc123XYZ', { OPENAI_API_KEY: 'x' });
+    expect(JSON.stringify(c)).not.toContain('sk-proj-abc123XYZ');
+    expect(c.detail).toContain('[REDACTED]');
+    expect(c.status).toBe('ok'); // classification still runs on the raw value
+  });
+
   it('formatDoctor renders a ready/not-ready footer', () => {
     const ready = formatDoctor({ ok: true, checks: [] });
     expect(ready[ready.length - 1]).toBe('ready');
