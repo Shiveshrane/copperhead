@@ -27,6 +27,8 @@ function paint(code: string, s: string): string {
 export const dim = (s: string): string => paint('90', s);
 /** Primary content — bright white (typed input, key values). */
 export const bright = (s: string): string => paint('97', s);
+/** Brand/title emphasis — bold bright white. */
+export const bold = (s: string): string => paint('1;97', s);
 /** Brand / active accent — copper #b87333 ≈ 256-color 172. */
 export const copper = (s: string): string => paint('38;5;172', s);
 /** Success — PCB green. */

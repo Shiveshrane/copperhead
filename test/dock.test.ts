@@ -59,7 +59,7 @@ describe('box primitives', () => {
 
   it('callout carries the bar, title, and body', () => {
     const lines = callout('info', 'New repository?', ['run copperhead init']);
-    expect(lines[0]).toContain('▌');
+    expect(lines[0]).toContain('▎');
     expect(lines[0]).toContain('New repository?');
     expect(lines[1]).toContain('run copperhead init');
   });

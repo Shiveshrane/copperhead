@@ -7,8 +7,7 @@
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import type { ProgressRenderer } from '../agent/render.js';
-import { copper, dim, err, ok, warn } from '../agent/theme.js';
-import { logoLockup } from '../agent/logo.js';
+import { bold, bright, copper, dim, err, ok, warn } from '../agent/theme.js';
 import { revealBanner, staggerWrite } from '../agent/animate.js';
 import { runAgentLoop, type BudgetExhaustedStats, type RunResult } from '../agent/loop.js';
 import type { ModelSource } from '../config.js';
@@ -190,20 +189,16 @@ function metaRow(label: string, value: string): string {
   return `  ${dim(label.padEnd(10))} ${value}`;
 }
 
-/** Exported for tests. */
+/** Exported for tests. Claude Code-style lockup: mark left, three meta lines right. */
 export function banner(opts: ReplOptions): string[] {
   const repo = shortPath(path.resolve(opts.repoRoot));
-  const cols = (opts.output as NodeJS.WriteStream | undefined)?.columns ?? process.stdout.columns ?? 80;
-  const lines = [
-    ...logoLockup({ version: opts.version, tagline: 'interactive shell', columns: cols }),
-    metaRow('model', `${opts.model}  ${dim(`via ${opts.modelSource}`)}`),
-    metaRow('kicad-cli', opts.kicadCliVersion),
-    metaRow('repo', dim(repo)),
-    '',
-    dim('  Describe a board change in plain English.'),
-    dim('  Type `/` for commands · Tab completes · Ctrl+C interrupts a running turn'),
-    '',
+  const mark = ['      │    ', '  ────◯────', '      │    '];
+  const info = [
+    `${bold('copperhead')} ${dim(`v${opts.version}`)}`,
+    bright(`${opts.model} via ${opts.modelSource} · kicad-cli ${opts.kicadCliVersion}`),
+    bright(repo),
   ];
+  const lines = ['', ...mark.map((m, i) => `${copper(m)}  ${info[i]!}`), ''];
   if (!existsSync(path.join(path.resolve(opts.repoRoot), '.copperhead'))) {
     lines.push(
       ...callout('info', 'New repository?', [
@@ -217,7 +212,7 @@ export function banner(opts: ReplOptions): string[] {
 }
 
 /** Plain prompt text; the input area paints it copper. */
-const PROMPT = '› ';
+const PROMPT = '❯ ';
 
 function isTtyStream(input: NodeJS.ReadableStream, output: NodeJS.WritableStream): boolean {
   return Boolean((input as NodeJS.ReadStream).isTTY) && Boolean((output as NodeJS.WriteStream).isTTY);
@@ -535,9 +530,10 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
       placeholder: `Try "${example}"`,
       pulse: true,
       status: () => ({
-        left: dim('/ for commands · Tab completes · /quit to leave'),
-        right: `${copper('●')} ${dim([opts.model, gitSeg].filter(Boolean).join(' · '))}`,
+        left: dim('/ for commands · tab to complete · ctrl+c twice to quit'),
+        right: dim(`In ${path.basename(path.resolve(opts.repoRoot))}`),
       }),
+      meta: () => `${copper('●')} ${dim([opts.model, gitSeg].filter(Boolean).join(' · '))}`,
       readKey: () => keys.next(),
       drainPrintable: () => keys.drainPrintable(),
     });

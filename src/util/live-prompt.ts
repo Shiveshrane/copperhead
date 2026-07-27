@@ -29,6 +29,8 @@ export interface LivePromptOptions {
   placeholder?: string;
   /** Status-bar halves, re-read on every repaint (pre-painted strings). */
   status?: () => { left: string; right: string };
+  /** Right-aligned meta line just above the input rules (hidden while the menu is open). */
+  meta?: () => string;
   /** Blink the caret while idle (only when animation is enabled). */
   pulse?: boolean;
 }
@@ -52,23 +54,14 @@ function matchesFor(buffer: string, commands: SelectItem[]): SelectItem[] {
 }
 
 /**
- * Visible slash-menu lines (exported for tests). Long lists are windowed to
- * `maxVisible` rows around the hovered item so the dock always fits a
- * standard 24-row terminal.
+ * Visible slash-menu lines (exported for tests): Claude Code-style rows of
+ * `label  description` with the hovered row highlighted. Long lists are
+ * windowed to `maxVisible` rows around the hovered item.
  */
-export function suggestionLines(matches: SelectItem[], index: number, maxVisible = 8): string[] {
+export function suggestionLines(matches: SelectItem[], index: number, maxVisible = 10): string[] {
   if (!matches.length) return [dim('  (no matching commands)')];
   const clamped = Math.max(0, Math.min(index, matches.length - 1));
-  const selected = matches[clamped]!;
   const width = Math.max(...matches.map((m) => m.label.length), 8);
-
-  const detail: string[] = [];
-  if (selected.description) {
-    detail.push(dim('  ────────────────────────────────────────'));
-    detail.push(`  ${copper(selected.label)}  ${selected.description}`);
-  } else {
-    detail.push(`  ${copper(selected.label)}`);
-  }
 
   let start = 0;
   if (matches.length > maxVisible) {
@@ -79,16 +72,13 @@ export function suggestionLines(matches: SelectItem[], index: number, maxVisible
   const rows = matches.slice(start, end).map((item, i0) => {
     const i = start + i0;
     const hovered = i === clamped;
-    const cursor = hovered ? copper('❯') : ' ';
     const label = item.label.padEnd(width);
-    if (hovered) return `  ${cursor} ${inverse(copper(label))}`;
-    return `  ${cursor} ${label}`;
+    const desc = item.description ?? '';
+    if (hovered) return `  ${copper('❯')} ${inverse(copper(label))}  ${desc}`;
+    return `    ${label}  ${desc}`;
   });
 
   return [
-    ...detail,
-    '',
-    dim('  ↑/↓ hover · Enter select · Esc dismiss'),
     ...(start > 0 ? [dim(`  ↑ ${start} more`)] : []),
     ...rows,
     ...(end < matches.length ? [dim(`  ↓ ${matches.length - end} more`)] : []),
@@ -287,31 +277,42 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
   const renderDock = (): void => {
     const w = boxWidth();
     const inputLines = inputAreaLines();
-    const menuLines: string[] = [];
-    if (buffer.startsWith('/')) {
-      const matches = matchesFor(buffer, opts.commands);
-      if (index >= matches.length) index = Math.max(0, matches.length - 1);
-      menuLines.push(...suggestionLines(matches, index));
-    }
-    const statusLines: string[] = [];
-    if (ctrlCArmed) {
-      statusLines.push(statusBar(` ${warn('press ctrl+c again to exit')}`, '', w));
-    } else if (opts.status) {
-      const { left, right } = opts.status();
-      statusLines.push(statusBar(` ${left}`, `${right} `, w));
-    }
-    const rows = [...inputLines, ...menuLines, ...statusLines];
+    const statusLine = ctrlCArmed
+      ? statusBar(`  ${warn('press ctrl+c again to exit')}`, '', w)
+      : opts.status
+        ? (() => {
+            const { left, right } = opts.status!();
+            return statusBar(`  ${left}`, `${right} `, w);
+          })()
+        : null;
+
     // Reserve the menu's rows up front: opening `/` fills blank space that is
-    // already part of the dock instead of growing it, so the viewport never
-    // scrolls when the menu appears.
+    // already part of the dock instead of growing it, so the input line never
+    // moves and the viewport never scrolls (Claude Code behavior: the menu
+    // opens upward, replacing the meta line and the blank band above it).
     const winRows =
       typeof (output as NodeJS.WriteStream).rows === 'number' && (output as NodeJS.WriteStream).rows
         ? (output as NodeJS.WriteStream).rows!
         : 24;
-    const reserve = Math.min(14, Math.max(0, winRows - inputLines.length - statusLines.length - 2));
-    const target = inputLines.length + statusLines.length + reserve;
-    while (rows.length < target) rows.push('');
-    dock.set(rows);
+    const reserve = Math.min(14, Math.max(4, winRows - inputLines.length - (statusLine ? 1 : 0) - 10));
+    const maxItems = Math.max(3, Math.min(10, reserve - 2));
+
+    let head: string[];
+    if (buffer.startsWith('/')) {
+      const matches = matchesFor(buffer, opts.commands);
+      if (index >= matches.length) index = Math.max(0, matches.length - 1);
+      head = suggestionLines(matches, index, maxItems);
+    } else {
+      head = opts.meta ? [statusBar('', `${opts.meta()} `, w)] : [];
+    }
+
+    const pad = Math.max(0, reserve - head.length);
+    dock.set([
+      ...(Array.from({ length: pad }, () => '') as string[]),
+      ...head,
+      ...inputLines,
+      ...(statusLine !== null ? [statusLine] : []),
+    ]);
   };
 
   const finish = (value: string | null): string | null => {

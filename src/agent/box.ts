@@ -91,9 +91,9 @@ export function statusBar(left: string, right: string, width: number): string {
   return left + ' '.repeat(w - l - r) + right;
 }
 
-/** Notice block: colored left bar + title + dim body (banner callouts). */
+/** Notice block: thin colored left bar + title + dim body (banner callouts). */
 export function callout(kind: 'info' | 'warn' | 'err', title: string, body: string[]): string[] {
   const paintBar = kind === 'err' ? err : kind === 'warn' ? warn : copper;
-  const bar = paintBar('▌');
-  return [`${bar} ${paintBar(title)}`, ...body.map((b) => `${bar} ${dim(b)}`)];
+  const bar = paintBar(' ▎');
+  return [`${bar} ${paintBar(title)}`, ...body.map((b) => `${bar} ${b}`)];
 }
