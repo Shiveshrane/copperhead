@@ -216,8 +216,8 @@ export function banner(opts: ReplOptions): string[] {
   return lines;
 }
 
-/** Plain prompt text; the input box paints it copper. */
-const PROMPT = 'copperhead › ';
+/** Plain prompt text; the input area paints it copper. */
+const PROMPT = '› ';
 
 function isTtyStream(input: NodeJS.ReadableStream, output: NodeJS.WritableStream): boolean {
   return Boolean((input as NodeJS.ReadStream).isTTY) && Boolean((output as NodeJS.WriteStream).isTTY);
@@ -327,6 +327,9 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
     }
   }
 
+  // Open like a full-window app: clear the viewport so the session starts on
+  // a clean copperhead screen (scrollback above is preserved).
+  (output as NodeJS.WritableStream).write('\x1b[2J\x1b[H');
   await revealBanner(banner(opts), log, { out: output as NodeJS.WriteStream });
 
   let turns = 0;

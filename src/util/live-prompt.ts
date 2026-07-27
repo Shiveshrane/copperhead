@@ -5,9 +5,9 @@
  * Typing `/` shows matching commands under the box; ↑/↓ + Enter picks one.
  */
 
-import { copper, dim } from '../agent/theme.js';
+import { bright, copper, dim } from '../agent/theme.js';
 import { prefersAnimation } from '../agent/animate.js';
-import { boxLines, inverse, statusBar, visibleWidth, wrapSpans, type Span } from '../agent/box.js';
+import { inverse, rule, statusBar, visibleWidth, wrapSpans, type Span } from '../agent/box.js';
 import { TerminalDock } from './dock.js';
 import type { SelectItem } from './select.js';
 
@@ -82,7 +82,7 @@ export function suggestionLines(matches: SelectItem[], index: number, maxVisible
     const cursor = hovered ? copper('❯') : ' ';
     const label = item.label.padEnd(width);
     if (hovered) return `  ${cursor} ${inverse(copper(label))}`;
-    return `  ${cursor} ${dim(label)}`;
+    return `  ${cursor} ${label}`;
   });
 
   return [
@@ -267,7 +267,7 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
 
   const boxWidth = (): number => Math.max(10, dock.cols() - 1);
 
-  const inputBoxLines = (): string[] => {
+  const inputAreaLines = (): string[] => {
     const w = boxWidth();
     const spans: Span[] = [{ text: opts.prompt, paint: copper }];
     if (buffer === '' && opts.placeholder) {
@@ -275,23 +275,38 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
       spans.push({ text: ph.slice(0, 1) || ' ', paint: phase % 2 ? dim : inverse });
       if (ph.length > 1) spans.push({ text: ph.slice(1), paint: dim });
     } else {
-      spans.push({ text: buffer });
+      spans.push({ text: buffer, paint: bright });
       spans.push({ text: ' ', paint: phase % 2 ? undefined : inverse });
     }
-    return boxLines(wrapSpans(spans, w - 4), w);
+    // Claude Code-style: full-width rules above and below, no side borders.
+    return [rule(w), ...wrapSpans(spans, w), rule(w)];
   };
 
   const renderDock = (): void => {
-    const rows: string[] = [...inputBoxLines()];
+    const w = boxWidth();
+    const inputLines = inputAreaLines();
+    const menuLines: string[] = [];
     if (buffer.startsWith('/')) {
       const matches = matchesFor(buffer, opts.commands);
       if (index >= matches.length) index = Math.max(0, matches.length - 1);
-      rows.push(...suggestionLines(matches, index));
+      menuLines.push(...suggestionLines(matches, index));
     }
+    const statusLines: string[] = [];
     if (opts.status) {
       const { left, right } = opts.status();
-      rows.push(statusBar(` ${left}`, `${right} `, boxWidth()));
+      statusLines.push(statusBar(` ${left}`, `${right} `, w));
     }
+    const rows = [...inputLines, ...menuLines, ...statusLines];
+    // Reserve the menu's rows up front: opening `/` fills blank space that is
+    // already part of the dock instead of growing it, so the viewport never
+    // scrolls when the menu appears.
+    const winRows =
+      typeof (output as NodeJS.WriteStream).rows === 'number' && (output as NodeJS.WriteStream).rows
+        ? (output as NodeJS.WriteStream).rows!
+        : 24;
+    const reserve = Math.min(14, Math.max(0, winRows - inputLines.length - statusLines.length - 2));
+    const target = inputLines.length + statusLines.length + reserve;
+    while (rows.length < target) rows.push('');
     dock.set(rows);
   };
 

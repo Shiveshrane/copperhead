@@ -52,17 +52,9 @@ export function wrapSpans(spans: Span[], width: number): string[] {
   return lines;
 }
 
-/** Rounded border around body lines; every row is exactly `width` visible cols. */
-export function boxLines(body: string[], width: number): string[] {
-  const w = Math.max(8, width);
-  const innerW = w - 4;
-  const top = dim('╭' + '─'.repeat(w - 2) + '╮');
-  const bottom = dim('╰' + '─'.repeat(w - 2) + '╯');
-  const rows = body.map((line) => {
-    const pad = ' '.repeat(Math.max(0, innerW - visibleWidth(line)));
-    return `${dim('│')} ${line}${pad} ${dim('│')}`;
-  });
-  return [top, ...rows, bottom];
+/** Full-width dim horizontal rule (the input-area separators). */
+export function rule(width: number): string {
+  return dim('─'.repeat(Math.max(1, width)));
 }
 
 /** One status line with a left- and a right-justified half. */

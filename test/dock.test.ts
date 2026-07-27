@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { TerminalDock } from '../src/util/dock.js';
 import {
-  boxLines,
   callout,
   inverse,
+  rule,
   statusBar,
   visibleWidth,
   wrapSpans,
@@ -45,13 +45,9 @@ describe('box primitives', () => {
     }
   });
 
-  it('boxLines renders rounded borders at a constant visible width', () => {
-    const lines = boxLines(['hi'], 20);
-    expect(lines).toHaveLength(3);
-    expect(lines[0]!.startsWith('╭')).toBe(true);
-    expect(lines[2]!.startsWith('╰')).toBe(true);
-    for (const line of lines) expect(visibleWidth(line)).toBe(20);
-    expect(lines[1]).toContain('hi');
+  it('rule spans the requested visible width', () => {
+    expect(visibleWidth(rule(20))).toBe(20);
+    expect(rule(20)).toContain('─');
   });
 
   it('statusBar right-justifies within the width and degrades when narrow', () => {
@@ -144,11 +140,31 @@ describe('promptWithSlashHints in the dock', () => {
     });
     expect(line).toBe('a');
     expect(out.written).toContain('Try "add a power LED"');
-    // Box chrome present.
-    expect(out.written).toContain('╭');
-    expect(out.written).toContain('╰');
+    // Full-width separator rules around the input line.
+    expect(out.written).toContain('─'.repeat(59));
     // Submitted line committed to scrollback.
     expect(out.written).toContain('> a\n');
+  });
+
+  it('reserves menu space so opening `/` never grows the dock', async () => {
+    const heights: number[] = [];
+    const out = fakeOut(60);
+    const dock = new TerminalDock(out);
+    const origSet = dock.set.bind(dock);
+    dock.set = (lines: string[]) => {
+      heights.push(lines.length);
+      origSet(lines);
+    };
+    await promptWithSlashHints({
+      prompt: '> ',
+      commands: SLASH_COMMANDS,
+      output: out,
+      dock,
+      status: () => ({ left: 'l', right: 'r' }),
+      readKey: keySequence(['/', '\x1b', '\r']),
+    });
+    // Closed prompt, open menu, dismissed menu: all the same dock height.
+    expect(new Set(heights).size).toBe(1);
   });
 
   it('renders the status bar under the input box', async () => {
