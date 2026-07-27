@@ -560,7 +560,6 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
 
       // Pause raw-mode so Ctrl+C is a real SIGINT during the agent turn.
       log('');
-      log(dim('  (Ctrl+C to interrupt)'));
       keys.pause();
       try {
         await handleRequest(line);
@@ -572,6 +571,7 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
     }
   } finally {
     keys.close();
+    dock.release();
     process.removeListener('SIGINT', onSigint);
     process.removeListener('exit', restoreScreen);
     restoreScreen();

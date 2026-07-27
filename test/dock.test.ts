@@ -163,14 +163,14 @@ describe('promptWithSlashHints in the dock', () => {
     expect(out.written).toContain('> a\n');
   });
 
-  it('reserves menu space so opening `/` never grows the dock', async () => {
-    const heights: number[] = [];
+  it('menu open/close overlays without ever scrolling (no newlines after activation)', async () => {
     const out = fakeOut(60);
     const dock = new TerminalDock(out);
+    let activationEnd = -1;
     const origSet = dock.set.bind(dock);
     dock.set = (lines: string[]) => {
-      heights.push(lines.length);
       origSet(lines);
+      if (activationEnd < 0) activationEnd = out.written.length;
     };
     await promptWithSlashHints({
       prompt: '> ',
@@ -178,10 +178,28 @@ describe('promptWithSlashHints in the dock', () => {
       output: out,
       dock,
       status: () => ({ left: 'l', right: 'r' }),
-      readKey: keySequence(['/', '\x1b', '\r']),
+      readKey: keySequence(['/', '\x1b[B', '\x1b', '\r']),
     });
-    // Closed prompt, open menu, dismissed menu: all the same dock height.
-    expect(new Set(heights).size).toBe(1);
+    // After the first paint (activation may scroll to free bottom rows), the
+    // menu opening, navigating, and closing must write zero newlines: only
+    // absolute-addressed repaints. The single trailing \n is the submit echo.
+    const after = out.written.slice(activationEnd);
+    expect((after.match(/\n/g) ?? []).length).toBe(1);
+    expect(after.endsWith('> \n')).toBe(true);
+  });
+
+  it('shrinking the dock clears the rows the menu occupied', () => {
+    const out = fakeOut(40); // 24 rows
+    const dock = new TerminalDock(out);
+    dock.set(['A']); // fence [1,23]
+    dock.set(['M1', 'M2', 'A']); // overlay grow: fence [1,21]
+    const lenBefore = out.written.length;
+    dock.set(['A']); // shrink back: rows 22-23 must be cleared
+    const after = out.written.slice(lenBefore);
+    expect(after).toContain('\x1b[22;1H\x1b[2K');
+    expect(after).toContain('\x1b[23;1H\x1b[2K');
+    expect(after).toContain('\x1b[1;23r');
+    expect(after).not.toContain('\n');
   });
 
   it('renders the status bar under the input box', async () => {

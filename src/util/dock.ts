@@ -48,13 +48,21 @@ export class TerminalDock {
     const newH = shown.length;
 
     let seq = SYNC_ON + HIDE;
-    if (newH !== this.dockH) {
-      // Reset any previous fence (DECSTBM homes the cursor; save/restore keeps
-      // the content position), free the bottom rows by scrolling exactly as
-      // much as needed, then fence content into [1, h - newH].
+    if (this.dockH === 0) {
+      // First activation: free the bottom rows by scrolling exactly as much
+      // as needed (preserves the banner above), then fence content into
+      // [1, h - newH]. DECSTBM homes the cursor; save/restore keeps it.
       seq += SAVE + REGION_RESET + RESTORE;
       seq += '\n'.repeat(newH) + `\x1b[${newH}A`;
       seq += SAVE + `\x1b[1;${h - newH}r` + RESTORE;
+    } else if (newH !== this.dockH) {
+      // Height change while active (menu open/close): overlay mode. Re-fence
+      // and clear any rows freed by a shrink; never scroll content.
+      seq += SAVE + `\x1b[1;${h - newH}r`;
+      for (let r = h - Math.max(this.dockH, newH) + 1; r <= h - newH; r++) {
+        seq += `\x1b[${r};1H\x1b[2K`;
+      }
+      seq += RESTORE;
     }
     seq += SAVE;
     for (let i = 0; i < newH; i++) {

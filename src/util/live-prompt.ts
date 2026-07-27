@@ -286,16 +286,15 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
           })()
         : null;
 
-    // Reserve the menu's rows up front: opening `/` fills blank space that is
-    // already part of the dock instead of growing it, so the input line never
-    // moves and the viewport never scrolls (Claude Code behavior: the menu
-    // opens upward, replacing the meta line and the blank band above it).
+    // Idle dock is small (meta + rules + input + status) so the content
+    // region above stays large. The menu overlays upward on open: the dock
+    // grows into the rows above without scrolling (Claude Code behavior) and
+    // clears them again on close.
     const winRows =
       typeof (output as NodeJS.WriteStream).rows === 'number' && (output as NodeJS.WriteStream).rows
         ? (output as NodeJS.WriteStream).rows!
         : 24;
-    const reserve = Math.min(14, Math.max(4, winRows - inputLines.length - (statusLine ? 1 : 0) - 10));
-    const maxItems = Math.max(3, Math.min(10, reserve - 2));
+    const maxItems = Math.max(3, Math.min(10, winRows - inputLines.length - (statusLine ? 1 : 0) - 12));
 
     let head: string[];
     if (buffer.startsWith('/')) {
@@ -306,21 +305,33 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
       head = opts.meta ? [statusBar('', `${opts.meta()} `, w)] : [];
     }
 
-    const pad = Math.max(0, reserve - head.length);
-    dock.set([
-      ...(Array.from({ length: pad }, () => '') as string[]),
-      ...head,
-      ...inputLines,
-      ...(statusLine !== null ? [statusLine] : []),
-    ]);
+    dock.set([...head, ...inputLines, ...(statusLine !== null ? [statusLine] : [])]);
   };
 
   const finish = (value: string | null): string | null => {
-    dock.release();
-    // Commit the submitted line into scrollback so history shows what
-    // actually ran (e.g. `/demo` picked from the bare-`/` dropdown).
-    if (value !== null) output.write(opts.prompt + value + '\n');
-    else output.write('\n');
+    if (value === null) {
+      // Session is ending (quit / EOF / double Ctrl+C): drop the dock.
+      dock.release();
+      output.write('\n');
+      return value;
+    }
+    // Keep the dock (and its scroll fence) through the turn so output stays
+    // in the content region and the banner is never scrolled away; show a
+    // passive input row until the next prompt.
+    const w = boxWidth();
+    dock.set([
+      ...(opts.meta ? [statusBar('', `${opts.meta()} `, w)] : []),
+      rule(w),
+      dim('  … working — ctrl+c interrupts'),
+      rule(w),
+      ...(opts.status ? [(() => {
+        const { left, right } = opts.status!();
+        return statusBar(`  ${left}`, `${right} `, w);
+      })()] : []),
+    ]);
+    // Commit the submitted line into the content region so history shows
+    // what actually ran (e.g. `/demo` picked from the bare-`/` dropdown).
+    output.write(opts.prompt + value + '\n');
     return value;
   };
 
@@ -425,6 +436,5 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
     }
   } finally {
     if (blink) clearInterval(blink);
-    dock.release();
   }
 }
