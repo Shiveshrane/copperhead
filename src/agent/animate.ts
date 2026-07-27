@@ -23,10 +23,10 @@ const HIDE = '\x1b[?25l';
 /** Growing fiducial frames (3 rows), converging on the block mark. Exported for tests. */
 export function fiducialBootFrames(): string[][] {
   return [
-    ['        ', '   ██   ', '        '],
-    ['  ▗▄▄▖  ', '  █  █  ', '  ▝▀▀▘  '],
-    ['  ▗▟▙▖  ', ' ▐▌  ▐▌ ', '  ▝▜▛▘  '],
-    ['  ▗▟▙▖  ', ' ▐█▌▐█▌ ', '  ▝▜▛▘  '],
+    ['               ', '        ██     ', '               '],
+    ['      ▗▄▄▖     ', '      █  █     ', '      ▝▀▀▘     '],
+    ['      ▄▟▙▄     ', '    ███  ███   ', '      ▀▜▛▀     '],
+    ['      ▄▟▙▄     ', ' ██████  ██████', '      ▀▜▛▀     '],
   ].map((frame) => frame.map((row) => copper(row)));
 }
 
