@@ -13,7 +13,7 @@ import { copper } from './theme.js';
 export function fiducialMark(): string[] {
   return [
     ' ▗▟██▙▖ ',
-    ' ██  ██ ',
+    '███  ███',
     ' ▝▜██▛▘ ',
   ];
 }

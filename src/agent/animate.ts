@@ -26,7 +26,7 @@ export function fiducialBootFrames(): string[][] {
     ['        ', '   ██   ', '        '],
     ['  ▗▄▄▖  ', '  █  █  ', '  ▝▀▀▘  '],
     [' ▗▟▄▄▙▖ ', ' ██  ██ ', ' ▝▜▀▀▛▘ '],
-    [' ▗▟██▙▖ ', ' ██  ██ ', ' ▝▜██▛▘ '],
+    [' ▗▟██▙▖ ', '███  ███', ' ▝▜██▛▘ '],
   ].map((frame) => frame.map((row) => copper(row)));
 }
 
@@ -46,8 +46,8 @@ export async function animateMarkAt(
 ): Promise<void> {
   if (!prefersAnimation()) return;
   const frames = fiducialBootFrames();
-  const frameMs = opts?.slow ? 320 : 140;
-  const holdMs = opts?.slow ? 700 : 300;
+  const frameMs = opts?.slow ? 240 : 100;
+  const holdMs = opts?.slow ? 500 : 200;
   for (let cycle = 0; cycle < 3; cycle++) {
     for (const frame of frames) {
       let seq = HIDE;
