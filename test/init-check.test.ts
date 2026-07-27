@@ -152,25 +152,33 @@ describe('copperhead check (AC-2)', () => {
   }, 60_000);
 });
 
-describe('check is LLM-free by construction (AC-2.1)', () => {
-  it('the check command module graph never imports a provider or SDK', async () => {
-    const { execa } = await import('execa');
-    // transitive import scan over src/commands/check.ts
-    const seen = new Set<string>();
-    const queue = ['src/commands/check.ts'];
-    while (queue.length) {
-      const file = queue.pop()!;
-      if (seen.has(file)) continue;
-      seen.add(file);
-      const text = await readFile(file, 'utf8');
-      expect(text, file).not.toMatch(/providers\/|from 'openai'|@anthropic-ai/);
-      for (const m of text.matchAll(/from '(\.[^']+)\.js'/g)) {
-        queue.push(path.join(path.dirname(file), m[1]!) + '.ts');
+describe('the offline commands are LLM-free and network-free by construction (AC-2.1, AC-2.6)', () => {
+  // A provider or SDK import is the obvious leak, but it is not the only one, and
+  // asserting "no traffic to api.* hosts" stopped being sufficient once a provider
+  // could legitimately point at localhost or any other configured endpoint. So scan
+  // for network capability itself: if nothing reachable from these entrypoints can
+  // open a socket, they cannot call anything, on any host. `execa` is deliberately
+  // absent from the list: kicad-cli is a subprocess, not a network client.
+  const FORBIDDEN = /providers\/|from 'openai'|@anthropic-ai|node:https?'|'undici'|'axios'|'got'|\bfetch\(/;
+
+  for (const entry of ['src/commands/check.ts', 'src/commands/export.ts']) {
+    it(`${entry} imports nothing that can reach the network`, async () => {
+      const seen = new Set<string>();
+      const queue = [entry];
+      while (queue.length) {
+        const file = queue.pop()!;
+        if (seen.has(file)) continue;
+        seen.add(file);
+        const text = await readFile(file, 'utf8');
+        expect(text, file).not.toMatch(FORBIDDEN);
+        for (const m of text.matchAll(/from '(\.[^']+)\.js'/g)) {
+          queue.push(path.join(path.dirname(file), m[1]!) + '.ts');
+        }
       }
-    }
-    expect(seen.size).toBeGreaterThan(3);
-    void execa; // silence unused in case of refactor
-  });
+      // guard against the scan silently walking nothing
+      expect(seen.size, `${entry} transitive graph`).toBeGreaterThan(3);
+    });
+  }
 });
 
 describe('fab export (create stage 6 tooling)', () => {

@@ -84,8 +84,16 @@ Every mutation made during an `lmstudio` run SHALL flow through copperhead's cap
 - **THEN** the edit tools (`edit_file`, `write_file`) are absent from the tool list sent to the local server, and any attempt to call them is refused by `dispatchTool`
 
 ### Requirement: The verification path stays LLM-free and network-free
-Adding a local provider SHALL NOT make `check` (alias `verify`) or the BOM export reach any model backend. The provider SHALL be reachable only through the agent loop's provider construction, and SHALL NOT be imported, directly or transitively, by the `check` command's module graph.
+Adding a local provider SHALL NOT make `check` (alias `verify`) or `export bom` reach any model backend. The provider SHALL be reachable only through the agent loop's provider construction. Neither command's transitive import graph SHALL contain a model provider, a model SDK, or any network client, so both are incapable of contacting **any** host rather than merely avoiding known cloud hostnames. A host-pattern assertion is explicitly insufficient, because a configured endpoint may be `localhost` or any other address.
 
 #### Scenario: check makes no model call to any host
 - **WHEN** `copperhead check` runs in a repo configured with `model: "lmstudio"` and a local server running
 - **THEN** no request is made to the local server or to any cloud host, and the command completes exactly as it would with any other configured model
+
+#### Scenario: export bom is equally offline
+- **WHEN** `copperhead export bom` runs in a repo configured with `model: "lmstudio"` and a local server running
+- **THEN** no request is made to the local server or to any other host, and the export completes from repository contents alone
+
+#### Scenario: the guarantee is structural, not observational
+- **WHEN** the transitive import graph of either command is scanned
+- **THEN** it contains no provider module, no model SDK, and no network client, so neither command can reach a host regardless of the configured model or endpoint

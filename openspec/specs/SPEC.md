@@ -413,11 +413,12 @@ Format: Given / When / Then. "Fixture" = the open-telegraph repo (or the tiny te
 
 ### AC-2 · `copperhead check`
 
-- **AC-2.1** On a clean fixture: exit 0, prints ERC ✓ DRC ✓ drift ✓, makes zero LLM calls (assert: no network to api.* hosts).
+- **AC-2.1** On a clean fixture: exit 0, prints ERC ✓ DRC ✓ drift ✓, makes zero LLM calls and zero network requests to **any** host, not merely `api.*` ones. A provider may legitimately be configured against `localhost` or any other endpoint (`lmstudio`, `LMSTUDIO_BASE_URL`), so a host-pattern assertion is not sufficient; the guarantee is structural (AC-2.6).
 - **AC-2.2** With a deliberately broken schematic (unconnected pin): exit non-zero, violation printed with sheet/location.
 - **AC-2.3** With a BOM.md value edited to disagree with the schematic (e.g. wrong resistor value): drift check fails and names the doc, the claim, and the actual value.
 - **AC-2.4** `--json` emits machine-readable results (parseable, stable keys).
 - **AC-2.5** Runs in < 60 s on the fixture.
+- **AC-2.6 (offline by construction)** Nothing reachable in the transitive import graph of `copperhead check` or `copperhead export bom` imports a model provider, a model SDK, or any network client (`node:http`/`node:https`, `undici`, `axios`, `got`, or `fetch`). Both commands are therefore incapable of contacting any host, regardless of configured model or endpoint. `execa` is permitted: `kicad-cli` is a subprocess, not a network client. Asserted by a static scan over both entrypoints.
 
 ### AC-3 · `copperhead do` — core loop
 
