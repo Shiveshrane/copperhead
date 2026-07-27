@@ -12,6 +12,10 @@
  */
 
 const rows = Number(process.argv[2] ?? 3);
+if (!Number.isInteger(rows) || rows <= 0) {
+  console.error(`invalid rows "${process.argv[2]}": expected a positive integer`);
+  process.exit(1);
+}
 const H = rows * 2; // subpixel rows
 const W = H * 2; // subpixel cols (aspect-corrected)
 

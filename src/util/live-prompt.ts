@@ -438,11 +438,11 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
       continue;
     }
 
-    // Arrows (and j/k while the dropdown is open) move the hover highlight.
-    const navUp =
-      key === 'up' || key === 'left' || (buffer.startsWith('/') && raw === 'k');
-    const navDown =
-      key === 'down' || key === 'right' || (buffer.startsWith('/') && raw === 'j');
+    // Arrows move the hover highlight; j/k only alias them on a bare "/"
+    // so they stay typeable inside a longer command (e.g. "/check" needs no
+    // j/k, but a future command might).
+    const navUp = key === 'up' || key === 'left' || (buffer === '/' && raw === 'k');
+    const navDown = key === 'down' || key === 'right' || (buffer === '/' && raw === 'j');
     if (navUp || navDown) {
       const matches = matchesFor(buffer, opts.commands);
       if (matches.length) {

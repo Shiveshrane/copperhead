@@ -8,6 +8,7 @@ import {
   banner,
   examplesText,
   completeSlash,
+  SLASH_COMMANDS,
 } from '../src/commands/repl.js';
 import { demoTourText, scaffoldDemoRepo, defaultBriefPath } from '../src/commands/demo.js';
 import { pickModel, selectMenu } from '../src/util/select.js';
@@ -25,8 +26,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
-import { PassThrough as NodePassThrough } from 'node:stream';
-import { SLASH_COMMANDS } from '../src/commands/repl.js';
 
 function fakeTty(): { input: PassThrough; output: PassThrough; lines: string[] } {
   const input = new PassThrough();
@@ -77,13 +76,6 @@ describe('parseSlash', () => {
     expect(parseSlash('EXIT')).toEqual({ cmd: '/quit', args: '' });
   });
 
-  it('maps bare quit/clear/help so they never start an agent run', () => {
-    expect(parseSlash('quit')).toEqual({ cmd: '/quit', args: '' });
-    expect(parseSlash('clear')).toEqual({ cmd: '/clear', args: '' });
-    expect(parseSlash('help')).toEqual({ cmd: '/help', args: '' });
-    expect(parseSlash('EXIT')).toEqual({ cmd: '/quit', args: '' });
-  });
-
   it('tab-completes slash commands', () => {
     expect(completeSlash('/d')).toContain('/demo');
     expect(completeSlash('/d')).toContain('/drift');
@@ -117,7 +109,7 @@ describe('parseSlash', () => {
 describe('selectMenu', () => {
   it('returns the item selected with Enter after ↓', async () => {
     setColorEnabled(false);
-    const output = new NodePassThrough();
+    const output = new PassThrough();
     async function* keys() {
       yield '\x1b[B'; // down
       yield '\r';
@@ -136,7 +128,7 @@ describe('selectMenu', () => {
 
   it('cancels on Esc', async () => {
     setColorEnabled(false);
-    const output = new NodePassThrough();
+    const output = new PassThrough();
     async function* keys() {
       yield '\x1b';
     }
@@ -151,8 +143,8 @@ describe('selectMenu', () => {
 
   it('leaves the input stream alive after a pick (regression: for-await destroyed stdin)', async () => {
     setColorEnabled(false);
-    const input = new NodePassThrough();
-    const output = new NodePassThrough();
+    const input = new PassThrough();
+    const output = new PassThrough();
     const picking = selectMenu({
       title: 'M',
       items: [{ value: 'a', label: 'a' }],
@@ -172,7 +164,7 @@ describe('selectMenu', () => {
 
   it('pickModel offers the provider choices and returns the selection', async () => {
     setColorEnabled(false);
-    const output = new NodePassThrough();
+    const output = new PassThrough();
     let painted = '';
     output.on('data', (c) => {
       painted += String(c);
@@ -255,7 +247,7 @@ describe('promptWithSlashHints', () => {
 
   it('coalesces paste via drainPrintable', async () => {
     setColorEnabled(false);
-    const output = new NodePassThrough();
+    const output = new PassThrough();
     (output as unknown as { columns: number }).columns = 40;
     const queued = ['p', 'p', 'e', 'n', 'd'];
     let i = 0;
@@ -277,7 +269,7 @@ describe('promptWithSlashHints', () => {
 
   it('shows matches as soon as / is typed and Enter picks the highlight', async () => {
     setColorEnabled(false);
-    const output = new NodePassThrough();
+    const output = new PassThrough();
     let painted = '';
     output.on('data', (c) => {
       painted += String(c);
@@ -296,7 +288,7 @@ describe('promptWithSlashHints', () => {
 
   it('↓ moves the highlight before Enter', async () => {
     setColorEnabled(false);
-    const output = new NodePassThrough();
+    const output = new PassThrough();
     let painted = '';
     output.on('data', (c) => {
       painted += String(c);
@@ -322,7 +314,7 @@ describe('promptWithSlashHints', () => {
 
   it('SS3 arrow sequences work (\\x1bOA)', async () => {
     setColorEnabled(false);
-    const output = new NodePassThrough();
+    const output = new PassThrough();
     const line = await promptWithSlashHints({
       prompt: '> ',
       commands: SLASH_COMMANDS,

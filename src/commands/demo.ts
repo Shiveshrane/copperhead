@@ -6,7 +6,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
-import { mkdir, writeFile, readFile, appendFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir, appendFile } from 'node:fs/promises';
 import { execa } from 'execa';
 import type { ProgressRenderer } from '../agent/render.js';
 import type { RunMetaInput } from '../agent/runmeta.js';
@@ -48,12 +48,26 @@ export function defaultDemoDir(): string {
   return process.env.COPPERHEAD_DEMO_DIR ?? DEFAULT_DEMO_DIR;
 }
 
+/** Marker identifying a directory scaffolded by `copperhead demo`. */
+const DEMO_MARKER = path.join('.copperhead', 'demo-repo');
+
 /**
  * Prepare a clean-enough git repo for the create pipeline (git init, ignore
  * runs/, baseline config + commit). Mirrors scripts/demo-simple.sh.
  */
 export async function scaffoldDemoRepo(demoDir: string): Promise<void> {
   await mkdir(demoDir, { recursive: true });
+
+  // Fail closed before touching git: only scaffold into an empty directory
+  // or one this function created earlier (identified by the marker file).
+  // Anything else risks git-initializing and committing into a directory
+  // the user cares about.
+  const entries = await readdir(demoDir);
+  if (entries.length > 0 && !existsSync(path.join(demoDir, DEMO_MARKER))) {
+    throw new Error(
+      `refusing to scaffold the demo repo in ${demoDir}: the directory is not empty and was not created by copperhead demo; use an empty directory (or point COPPERHEAD_DEMO_DIR elsewhere)`,
+    );
+  }
 
   const git = async (...args: string[]) => execa('git', args, { cwd: demoDir });
 
@@ -75,6 +89,8 @@ export async function scaffoldDemoRepo(demoDir: string): Promise<void> {
 
   const cfgDir = path.join(demoDir, '.copperhead');
   await mkdir(cfgDir, { recursive: true });
+  const marker = path.join(demoDir, DEMO_MARKER);
+  if (!existsSync(marker)) await writeFile(marker, 'created by copperhead demo\n', 'utf8');
   const cfg = path.join(cfgDir, 'config.json');
   if (!existsSync(cfg)) {
     // Create stages need a larger turn budget than a single `do` edit.

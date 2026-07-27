@@ -111,35 +111,28 @@ export class InteractiveRenderer implements ProgressRenderer {
   }
 
   private statusText(): string {
+    // Raw (uncolored) segments once; both the colored line and the
+    // narrow-terminal fallback are assembled from these.
+    const spinner = this.busy ? FRAMES[this.frame % FRAMES.length]! : '·';
     const turn = `turn ${this.turn}/${this.maxTurns}`;
-    const tokens = dim(`${fmtTokens(this.tokensIn)} in / ${fmtTokens(this.tokensOut)} out`);
-    const elapsed = dim(fmtDuration(Date.now() - this.startMs));
-    const parts = [turn, tokens, elapsed];
-    if (this.busy) {
-      // Fold streamed-output volume into the busy segment so a large turn's
-      // status line visibly grows — a hung one stays frozen (5.1).
-      const busy = this.streamedChars
+    const tokens = `${fmtTokens(this.tokensIn)} in / ${fmtTokens(this.tokensOut)} out`;
+    const elapsed = fmtDuration(Date.now() - this.startMs);
+    // Fold streamed-output volume into the busy segment so a large turn's
+    // status line visibly grows — a hung one stays frozen (5.1).
+    const busy = this.busy
+      ? this.streamedChars
         ? `${this.busy} ~${fmtTokens(this.streamedChars)} ch`
-        : this.busy;
-      parts.push(warn(busy));
-    }
-    const spinner = this.busy ? copper(FRAMES[this.frame % FRAMES.length]!) : dim('·');
-    const line = `${spinner} ${parts.join(dim(' · '))}`;
+        : this.busy
+      : undefined;
+    const parts = [turn, dim(tokens), dim(elapsed), ...(busy ? [warn(busy)] : [])];
+    const line = `${this.busy ? copper(spinner) : dim(spinner)} ${parts.join(dim(' · '))}`;
     // Truncate by visible length roughly: strip SGR when measuring so color
     // codes don't eat the column budget and clip the readable text early.
     const width = this.out.columns ?? 80;
     const visible = line.replace(/\x1b\[[0-9;]*m/g, '');
     if (visible.length <= width) return line;
     // Fall back to an uncolored truncated line when the terminal is too narrow.
-    const plain = [
-      this.busy ? FRAMES[this.frame % FRAMES.length]! : '·',
-      turn,
-      `${fmtTokens(this.tokensIn)} in / ${fmtTokens(this.tokensOut)} out`,
-      fmtDuration(Date.now() - this.startMs),
-      ...(this.busy
-        ? [this.streamedChars ? `${this.busy} ~${fmtTokens(this.streamedChars)} ch` : this.busy]
-        : []),
-    ].join(' · ');
+    const plain = [spinner, turn, tokens, elapsed, ...(busy ? [busy] : [])].join(' · ');
     return plain.length > width ? plain.slice(0, width - 1) : plain;
   }
 

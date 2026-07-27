@@ -56,14 +56,14 @@ chrome.
 
 ## Structural notes vs copperhead's current implementation
 
-1. Claude's grays are truecolor `#999999`/`#888888`, copperhead uses SGR 90:
-   theirs reads lighter and more uniform across terminal themes.
-2. Claude's menu hover recolors the row (`#b1b9f9`), copperhead uses inverse
-   video: the inverse block is heavier visually.
-3. Claude's hovered menu descriptions wrap to a second row, copperhead
-   truncates to one row.
-4. Claude leaves the real terminal cursor visible in the input row,
-   copperhead hides it and draws an inverse block.
+1. Grays: adopted. copperhead's `dim`/`ruleDim` are truecolor
+   `#999999`/`#888888` (with an SGR 90 fallback when truecolor is off).
+2. Menu hover: adopted as a color change. Claude recolors the row with
+   periwinkle `#b1b9f9`; copperhead recolors with `copperLight` (#eec9a5)
+   instead of inverse video.
+3. Hovered menu descriptions: adopted. Both wrap to a second row.
+4. Caret: adopted. copperhead parks the real terminal cursor in the input
+   row instead of drawing a synthetic inverse block.
 5. The name `Claude Code` is bold in the terminal's default foreground, so it
    adapts to light/dark themes, it is not hard-coded white.
 6. There is a non-breaking space after `❯` in the prompt.

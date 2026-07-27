@@ -87,7 +87,7 @@ export function statusBar(left: string, right: string, width: number): string {
   const l = visibleWidth(left);
   const r = visibleWidth(right);
   // Too narrow for both: the hints matter more than the meta.
-  if (l + r + 2 > w) return left;
+  if (l + r + 2 > w) return truncateVisible(left, w);
   return left + ' '.repeat(w - l - r) + right;
 }
 

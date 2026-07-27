@@ -19,6 +19,7 @@ export function sleep(ms: number): Promise<void> {
 }
 
 const HIDE = '\x1b[?25l';
+const SHOW = '\x1b[?25h';
 
 /** Growing fiducial frames (3 rows), converging on the block mark. Exported for tests. */
 export function fiducialBootFrames(): string[][] {
@@ -48,17 +49,23 @@ export async function animateMarkAt(
   const frames = fiducialBootFrames();
   const frameMs = opts?.slow ? 110 : 45;
   const holdMs = opts?.slow ? 220 : 90;
-  for (let cycle = 0; cycle < 2; cycle++) {
-    for (const frame of frames) {
-      let seq = HIDE;
-      frame.forEach((row, i) => {
-        seq += `\x1b[${topRow + i};1H${row}`;
-      });
-      out.write(seq);
-      await sleep(frameMs);
+  try {
+    for (let cycle = 0; cycle < 2; cycle++) {
+      for (const frame of frames) {
+        let seq = HIDE;
+        frame.forEach((row, i) => {
+          seq += `\x1b[${topRow + i};1H${row}`;
+        });
+        out.write(seq);
+        await sleep(frameMs);
+      }
     }
+    await sleep(holdMs);
+  } finally {
+    // Never leave the terminal with a hidden cursor, even if a write or
+    // sleep throws mid-animation.
+    out.write(SHOW);
   }
-  await sleep(holdMs);
 }
 
 /** Copper horizontal rule (PCB-trace vibe). */

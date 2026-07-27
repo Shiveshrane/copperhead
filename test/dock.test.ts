@@ -65,7 +65,8 @@ describe('box primitives', () => {
     const line = statusBar('left', 'R', 20);
     expect(visibleWidth(line)).toBe(20);
     expect(line.endsWith('R')).toBe(true);
-    expect(statusBar('a very long left side', 'right', 10)).toBe('a very long left side');
+    // Too narrow for both: keep the left side but never exceed the width.
+    expect(statusBar('a very long left side', 'right', 10)).toBe('a very lon');
   });
 
   it('callout carries the bar, title, and body', () => {
@@ -322,8 +323,8 @@ describe('promptWithSlashHints in the dock', () => {
     const dock = new TerminalDock(out);
     let activationEnd = -1;
     const origSet = dock.set.bind(dock);
-    dock.set = (lines: string[]) => {
-      origSet(lines);
+    dock.set = (lines: string[], caret?: { row: number; col: number }) => {
+      origSet(lines, caret);
       if (activationEnd < 0) activationEnd = out.written.length;
     };
     await promptWithSlashHints({

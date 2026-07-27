@@ -9,7 +9,7 @@ sidebar:
 copperhead [global options] [<command>]
 ```
 
-With no subcommand, `copperhead` starts the interactive agent shell. Every command probes `kicad-cli` before doing anything and exits 1 if it is not on your `PATH`. A `.env` in the working directory is loaded before any command resolves a model or a provider; a real environment variable always beats the file.
+With no subcommand, `copperhead` starts the interactive agent shell. Every command probes `kicad-cli` before doing anything and exits 1 if it cannot be found. Resolution order: `COPPERHEAD_KICAD_CLI` when set, then `kicad-cli` on your `PATH`, then the macOS KiCad.app bundle locations. A `.env` in the working directory is loaded before any command resolves a model or a provider; a real environment variable always beats the file.
 
 ## Commands at a glance
 

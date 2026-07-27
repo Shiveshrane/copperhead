@@ -41,6 +41,15 @@ const program = new Command();
 
 const repoOf = (opts: { repo?: string }): string => path.resolve(opts.repo ?? process.cwd());
 
+/** `--max-turns` accepts only a positive integer; "5oops" and "NaN" refuse to start. */
+function parseMaxTurns(raw: string): number {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`--max-turns must be a positive integer, got "${raw}"`);
+  }
+  return n;
+}
+
 async function confirmTty(question: string): Promise<boolean> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const answer = await rl.question(`${question} [y/N] `);
@@ -120,7 +129,7 @@ program
           modelSource: source,
           version,
           kicadCliVersion: kicadVer,
-          ...(opts.maxTurns ? { maxTurns: parseInt(opts.maxTurns, 10) } : {}),
+          ...(opts.maxTurns ? { maxTurns: parseMaxTurns(opts.maxTurns) } : {}),
           interactive: opts.interactive ?? false,
           ...(seed ? { seed } : {}),
           confirm: confirmTty,
@@ -228,7 +237,7 @@ program
           repoRoot: repo,
           request,
           model,
-          ...(opts.maxTurns ? { maxTurns: parseInt(opts.maxTurns, 10) } : {}),
+          ...(opts.maxTurns ? { maxTurns: parseMaxTurns(opts.maxTurns) } : {}),
           allowDirty: opts.allowDirty ?? false,
           dryRun: opts.dryRun ?? false,
           interactive: opts.interactive ?? false,
