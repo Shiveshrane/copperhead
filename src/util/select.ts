@@ -70,6 +70,23 @@ async function* stdinKeys(input: NodeJS.ReadStream): AsyncGenerator<string> {
   }
 }
 
+/** Model choices offered when no model is configured anywhere. */
+export const MODEL_CHOICES: SelectItem[] = [
+  { value: 'claude-code', label: 'claude-code', description: 'Claude Code CLI (saved login)' },
+  { value: 'codex', label: 'codex', description: 'Codex CLI (saved login)' },
+  { value: 'cursor', label: 'cursor', description: 'Cursor CLI (saved login)' },
+  { value: 'claude', label: 'claude', description: 'Anthropic API (needs ANTHROPIC_API_KEY)' },
+  { value: 'gpt-5', label: 'gpt-5', description: 'OpenAI API (needs OPENAI_API_KEY)' },
+];
+
+/**
+ * Interactive model picker for a TTY session with no configured model.
+ * Resolves to the chosen model id, or null if cancelled.
+ */
+export async function pickModel(opts: Omit<SelectOptions, 'title' | 'items'> = {}): Promise<string | null> {
+  return selectMenu({ title: 'Select a model for this session', items: MODEL_CHOICES, ...opts });
+}
+
 /**
  * Show a selectable list. Resolves to the chosen value, or null if cancelled.
  */

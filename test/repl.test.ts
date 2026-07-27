@@ -10,7 +10,7 @@ import {
   completeSlash,
 } from '../src/commands/repl.js';
 import { demoTourText, scaffoldDemoRepo, defaultBriefPath } from '../src/commands/demo.js';
-import { selectMenu } from '../src/util/select.js';
+import { pickModel, selectMenu } from '../src/util/select.js';
 import {
   keySequence,
   inputRowRows,
@@ -147,6 +147,26 @@ describe('selectMenu', () => {
       keys: keys(),
     });
     expect(chosen).toBeNull();
+  });
+
+  it('pickModel offers the provider choices and returns the selection', async () => {
+    setColorEnabled(false);
+    const output = new NodePassThrough();
+    let painted = '';
+    output.on('data', (c) => {
+      painted += String(c);
+    });
+    async function* keys() {
+      yield '\x1b[B'; // down: claude-code -> codex
+      yield '\r';
+    }
+    const chosen = await pickModel({
+      output: output as unknown as NodeJS.WriteStream,
+      keys: keys(),
+    });
+    expect(chosen).toBe('codex');
+    expect(painted).toContain('claude-code');
+    expect(painted).toContain('Cursor CLI');
   });
 });
 

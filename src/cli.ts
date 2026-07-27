@@ -3,7 +3,8 @@ import { Command } from 'commander';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline/promises';
-import { loadConfig, resolveModel } from './config.js';
+import { loadConfig, resolveModel, type ModelSource } from './config.js';
+import { pickModel } from './util/select.js';
 import { runInit, InitError } from './memory/scaffold.js';
 import { runCheck } from './commands/check.js';
 import { runDoctor, formatDoctor } from './commands/doctor.js';
@@ -96,7 +97,21 @@ program
       try {
         const kicadVer = await kicadCliVersion();
         const config = await loadConfig(repo);
-        const { model, source } = resolveModel(opts.model, config);
+        const renderer = rendererOf();
+        let model: string;
+        let source: ModelSource;
+        try {
+          ({ model, source } = resolveModel(opts.model, config));
+        } catch (err) {
+          // No model anywhere (flag, COPPERHEAD_MODEL, config, .env keys):
+          // on a TTY, offer an interactive pick instead of refusing to start.
+          if (!process.stdin.isTTY || !process.stdout.isTTY) throw err;
+          console.log('No model configured for this session, pick one:');
+          const chosen = await pickModel();
+          if (!chosen) throw err;
+          model = chosen;
+          source = 'picker';
+        }
         const continuePrompt = budgetContinuePrompt();
         const seed = requestParts.length ? requestParts.join(' ') : undefined;
         const res = await runRepl({
@@ -110,7 +125,7 @@ program
           ...(seed ? { seed } : {}),
           confirm: confirmTty,
           ...(continuePrompt ? { onBudgetExhausted: continuePrompt } : {}),
-          renderer: rendererOf(),
+          renderer,
         });
         process.exit(res.ok ? 0 : 1);
       } catch (err) {

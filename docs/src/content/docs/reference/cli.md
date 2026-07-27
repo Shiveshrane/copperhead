@@ -45,7 +45,7 @@ copperhead repl --model claude-code
 
 | Option | Description |
 | --- | --- |
-| `--model <model>` | Model / provider selection (same as `do`). |
+| `--model <model>` | Model / provider selection (same as `do`). When no model is configured anywhere (flag, `COPPERHEAD_MODEL`, config, `.env` API keys), the shell offers an interactive picker instead of refusing to start. |
 | `--max-turns <n>` | Turn budget per request. |
 | `--interactive` | Pause for approval after each proposal validates. |
 
