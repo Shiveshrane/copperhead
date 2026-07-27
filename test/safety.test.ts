@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -208,6 +208,38 @@ describe('git guard (AC-3.8, AC-3.6)', () => {
       // ...and the failed run's own scratch file does not.
       expect(existsSync(path.join(repo, 'agent-scratch.txt'))).toBe(false);
     } finally {
+      await cleanup();
+    }
+  });
+
+  it('a failed untracked restore still rolls back the tracked state', async () => {
+    // The untracked replay is best-effort: it runs after `stash apply`, so if
+    // it throws, the tracked rollback is already done and must be kept. A
+    // corrupt snapshot (tree sha that no longer resolves) is the real-world
+    // shape of that failure — an unreachable object pruned before rollback.
+    const { repo, cleanup } = await tempFixtureRepo();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const sch = path.join(repo, 'hardware', 'open-key.kicad_sch');
+      const tracked = await readFile(sch, 'utf8');
+      await writeFile(sch, tracked.replace('KEY_DAH', 'KEY_EDITED'), 'utf8');
+      await writeFile(path.join(repo, 'hand-written-notes.md'), 'do not lose me\n', 'utf8');
+
+      const snap = await snapshot(repo);
+      expect(snap.untracked).not.toBeNull();
+      await writeFile(sch, tracked.replace('KEY_DAH', 'KEY_RUINED_BY_THE_AGENT'), 'utf8');
+
+      // A tree sha that does not resolve: read-tree fails, restoreUntracked throws.
+      await expect(restore(repo, { ...snap, untracked: '0'.repeat(40) })).resolves.toBeUndefined();
+
+      expect(warn.mock.calls.map((c) => String(c[0]))).toContainEqual(
+        expect.stringContaining('could not restore untracked files after rollback'),
+      );
+      // The tracked rollback survived the failure, up to and including the
+      // user's uncommitted edit replayed from the stash object.
+      expect(await readFile(sch, 'utf8')).toBe(tracked.replace('KEY_DAH', 'KEY_EDITED'));
+    } finally {
+      warn.mockRestore();
       await cleanup();
     }
   });
