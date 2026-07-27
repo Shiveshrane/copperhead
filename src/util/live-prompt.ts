@@ -5,7 +5,7 @@
  * Typing `/` shows matching commands under the box; ↑/↓ + Enter picks one.
  */
 
-import { bright, copper, dim } from '../agent/theme.js';
+import { bright, copper, dim, warn } from '../agent/theme.js';
 import { prefersAnimation } from '../agent/animate.js';
 import { inverse, rule, statusBar, visibleWidth, wrapSpans, type Span } from '../agent/box.js';
 import { TerminalDock } from './dock.js';
@@ -264,6 +264,8 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
   let index = 0;
   /** Caret blink phase (0 = visible). */
   let phase = 0;
+  /** First Ctrl+C clears the input and arms; a second one exits. */
+  let ctrlCArmed = false;
 
   const boxWidth = (): number => Math.max(10, dock.cols() - 1);
 
@@ -292,7 +294,9 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
       menuLines.push(...suggestionLines(matches, index));
     }
     const statusLines: string[] = [];
-    if (opts.status) {
+    if (ctrlCArmed) {
+      statusLines.push(statusBar(` ${warn('press ctrl+c again to exit')}`, '', w));
+    } else if (opts.status) {
       const { left, right } = opts.status();
       statusLines.push(statusBar(` ${left}`, `${right} `, w));
     }
@@ -336,7 +340,18 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
       if (raw === null) return finish(null);
       const key = normalizeNavKey(raw);
 
-      if (key === '\x03') return finish(null);
+      if (key === '\x03') {
+        if (ctrlCArmed) return finish(null);
+        ctrlCArmed = true;
+        buffer = '';
+        index = 0;
+        renderDock();
+        continue;
+      }
+      if (ctrlCArmed) {
+        ctrlCArmed = false;
+        renderDock();
+      }
       if (key === '\x04' && buffer === '') return finish(null);
 
       if (key === '\r' || key === '\n') {

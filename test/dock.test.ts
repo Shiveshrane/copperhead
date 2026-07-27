@@ -75,39 +75,56 @@ describe('box primitives', () => {
   });
 });
 
-describe('TerminalDock', () => {
-  it('log writes the scrollback line and repaints the dock below it', () => {
-    const out = fakeOut();
+describe('TerminalDock (scroll-region fence)', () => {
+  it('fences content with DECSTBM and paints the dock with absolute addressing', () => {
+    const out = fakeOut(40); // rows: 24
+    const dock = new TerminalDock(out);
+    dock.set(['DOCK-A', 'DOCK-B']);
+    // Content fenced to rows 1..22; dock painted at rows 23 and 24.
+    expect(out.written).toContain('\x1b[1;22r');
+    expect(out.written).toContain('\x1b[23;1H');
+    expect(out.written).toContain('\x1b[24;1H');
+    expect(out.written).toContain('DOCK-A');
+    expect(out.written).toContain('DOCK-B');
+  });
+
+  it('same-height repaints never touch the scroll region', () => {
+    const out = fakeOut(40);
+    const dock = new TerminalDock(out);
+    dock.set(['A']);
+    const before = (out.written.match(/\x1b\[1;23r/g) ?? []).length;
+    dock.set(['B']);
+    dock.set(['C']);
+    const after = (out.written.match(/\x1b\[1;23r/g) ?? []).length;
+    expect(before).toBe(1);
+    expect(after).toBe(1); // fence set once, repaints are pure absolute writes
+  });
+
+  it('log is a plain write: the fence keeps the dock safe without repaints', () => {
+    const out = fakeOut(40);
     const dock = new TerminalDock(out);
     dock.set(['DOCK-ROW']);
+    const lenBefore = out.written.length;
     dock.log('hello');
-    const firstDock = out.written.indexOf('DOCK-ROW');
-    const hello = out.written.indexOf('hello\n');
-    const lastDock = out.written.lastIndexOf('DOCK-ROW');
-    expect(firstDock).toBeGreaterThanOrEqual(0);
-    expect(hello).toBeGreaterThan(firstDock);
-    expect(lastDock).toBeGreaterThan(hello);
+    expect(out.written.slice(lenBefore)).toBe('hello\n');
   });
 
-  it('erase accounts for soft-wrapped rows', () => {
-    const out = fakeOut(10);
+  it('truncates dock lines to the terminal width so they cannot wrap', () => {
+    const out = fakeOut(40);
     const dock = new TerminalDock(out);
-    dock.set(['x'.repeat(25)]); // 3 physical rows at 10 cols
-    dock.set(['y']);
-    const ups = out.written.match(/\x1b\[1A/g) ?? [];
-    expect(ups).toHaveLength(2);
+    dock.set(['x'.repeat(100)]);
+    expect(out.written).toContain('x'.repeat(39));
+    expect(out.written).not.toContain('x'.repeat(40));
   });
 
-  it('release clears the dock and restores the cursor', () => {
-    const out = fakeOut();
+  it('release resets the region, clears the dock rows, and restores the cursor', () => {
+    const out = fakeOut(40);
     const dock = new TerminalDock(out);
     dock.set(['ROW']);
     dock.release();
+    expect(out.written).toContain('\x1b[r');
     expect(out.written).toContain('\x1b[?25h');
-    // A release with nothing painted must not move the cursor up.
-    const out2 = fakeOut();
-    new TerminalDock(out2).release();
-    expect(out2.written).not.toContain('\x1b[1A');
+    expect(out.written).toContain('\x1b[24;1H\x1b[2K');
   });
 });
 
@@ -178,5 +195,28 @@ describe('promptWithSlashHints in the dock', () => {
     });
     expect(out.written).toContain('hints here');
     expect(out.written).toContain('model-x');
+  });
+
+  it('requires Ctrl+C twice to exit and clears the buffer first', async () => {
+    const out = fakeOut(60);
+    const line = await promptWithSlashHints({
+      prompt: '> ',
+      commands: SLASH_COMMANDS,
+      output: out,
+      readKey: keySequence(['a', '\x03', '\x03']),
+    });
+    expect(line).toBeNull();
+    expect(out.written).toContain('press ctrl+c again to exit');
+  });
+
+  it('any key after Ctrl+C disarms the exit', async () => {
+    const out = fakeOut(60);
+    const line = await promptWithSlashHints({
+      prompt: '> ',
+      commands: SLASH_COMMANDS,
+      output: out,
+      readKey: keySequence(['\x03', 'x', '\r']),
+    });
+    expect(line).toBe('x');
   });
 });

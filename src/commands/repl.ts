@@ -327,9 +327,24 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
     }
   }
 
-  // Open like a full-window app: clear the viewport so the session starts on
-  // a clean copperhead screen (scrollback above is preserved).
-  (output as NodeJS.WritableStream).write('\x1b[2J\x1b[H');
+  // Own the full window (htop-style): switch to the alternate screen buffer,
+  // so the shell underneath stays untouched, the viewport cannot scroll into
+  // old shell content, and quitting restores the terminal exactly as it was.
+  (output as NodeJS.WritableStream).write('\x1b[?1049h\x1b[2J\x1b[H');
+  const restoreScreen = (): void => {
+    // Reset the scroll region too: it survives the alt-screen switch on some
+    // terminals and would leave the user's shell fenced to a partial window.
+    (output as NodeJS.WritableStream).write('\x1b[r\x1b[?1049l\x1b[?25h');
+  };
+  // Ctrl+C during an agent turn terminates the process (PR semantics); make
+  // sure the terminal is never left stranded in the alternate buffer.
+  const onSigint = (): void => {
+    restoreScreen();
+    process.exit(130);
+  };
+  process.on('SIGINT', onSigint);
+  process.once('exit', restoreScreen);
+
   await revealBanner(banner(opts), log, { out: output as NodeJS.WriteStream });
 
   let turns = 0;
@@ -353,11 +368,7 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
   }
 
   const runSlash = async (cmd: string): Promise<'quit' | 'continue'> => {
-    if (QUIT.has(cmd)) {
-      log('');
-      log(dim('  session ended'));
-      return 'quit';
-    }
+    if (QUIT.has(cmd)) return 'quit';
     if (cmd === '/help' || cmd === '/h' || cmd === '/?') {
       await staggerWrite(helpText().split('\n'), log);
       return 'continue';
@@ -535,11 +546,7 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
   try {
     for (;;) {
       const raw = await ask();
-      if (raw === null) {
-        log('');
-        log(dim('  session ended'));
-        break;
-      }
+      if (raw === null) break;
       const line = raw.trim();
       if (!line) continue;
 
@@ -569,7 +576,14 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
     }
   } finally {
     keys.close();
+    process.removeListener('SIGINT', onSigint);
+    process.removeListener('exit', restoreScreen);
+    restoreScreen();
   }
+
+  // Printed after the screen restore, so it lands in the normal buffer where
+  // the user's shell resumes.
+  log(dim('  copperhead session ended'));
 
   return { ok: true, turns };
 }

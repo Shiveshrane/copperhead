@@ -57,6 +57,30 @@ export function rule(width: number): string {
   return dim('─'.repeat(Math.max(1, width)));
 }
 
+/** Truncate to a visible width, keeping SGR sequences intact and closed. */
+export function truncateVisible(s: string, width: number): string {
+  if (visibleWidth(s) <= width) return s;
+  let out = '';
+  let vis = 0;
+  let i = 0;
+  let hadSgr = false;
+  while (i < s.length && vis < width) {
+    if (s[i] === '\x1b') {
+      const m = /^\x1b\[[0-9;]*m/.exec(s.slice(i));
+      if (m) {
+        out += m[0];
+        hadSgr = true;
+        i += m[0].length;
+        continue;
+      }
+    }
+    out += s[i];
+    vis++;
+    i++;
+  }
+  return out + (hadSgr ? '\x1b[0m' : '');
+}
+
 /** One status line with a left- and a right-justified half. */
 export function statusBar(left: string, right: string, width: number): string {
   const w = Math.max(8, width);

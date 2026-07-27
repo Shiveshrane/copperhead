@@ -1,23 +1,27 @@
 /**
- * Bottom-of-viewport dock: owns the last rows of the terminal and repaints
- * them in place while normal output scrolls into scrollback above. This is
- * the Claude Code model: no alternate screen, scrollback stays intact, and
- * exactly one owner repaints the bottom region.
+ * Bottom-of-viewport dock built on DECSTBM scroll regions: content is fenced
+ * into rows [1, H - dockHeight] and the dock is painted with absolute cursor
+ * addressing below the scroll margin, so no amount of content output (or
+ * mouse wheel) can ever move it. Runs inside the alternate screen buffer the
+ * REPL enters at startup. This is the FrankenTUI/ratatui-inline technique;
+ * see also DECSTBM (CSI r).
  */
 
-import { visibleWidth } from '../agent/box.js';
+import { truncateVisible } from '../agent/box.js';
 
 const HIDE = '\x1b[?25l';
 const SHOW = '\x1b[?25h';
 /** Synchronized-output guards; terminals without support ignore them. */
 const SYNC_ON = '\x1b[?2026h';
 const SYNC_OFF = '\x1b[?2026l';
-const CLEAR = '\r\x1b[2K';
+/** Reset the scroll region to the full screen. Homes the cursor (hence DECSC/DECRC around it). */
+const REGION_RESET = '\x1b[r';
+const SAVE = '\x1b7';
+const RESTORE = '\x1b8';
 
 export class TerminalDock {
-  private lines: string[] = [];
-  /** Physical rows the current paint occupies (wrap-aware). */
-  private paintedRows = 0;
+  /** Rows the dock currently occupies at the bottom of the screen. */
+  private dockH = 0;
 
   constructor(private readonly out: NodeJS.WriteStream) {}
 
@@ -25,46 +29,63 @@ export class TerminalDock {
     return typeof this.out.columns === 'number' && this.out.columns ? this.out.columns : 80;
   }
 
-  private rowsOf(line: string): number {
-    return Math.max(1, Math.ceil(visibleWidth(line) / this.cols()));
+  rows(): number {
+    return typeof this.out.rows === 'number' && this.out.rows ? this.out.rows : 24;
   }
 
-  private erase(): void {
-    if (!this.paintedRows) return;
-    this.out.write(CLEAR);
-    for (let i = 1; i < this.paintedRows; i++) this.out.write('\x1b[1A' + CLEAR);
-    this.paintedRows = 0;
-  }
-
-  private paint(): void {
-    if (!this.lines.length) return;
-    this.out.write(HIDE + this.lines.join('\n'));
-    this.paintedRows = this.lines.reduce((n, l) => n + this.rowsOf(l), 0);
-  }
-
-  /** Replace the docked region with new rows. */
+  /**
+   * Replace the docked region. On a height change the content scroll region
+   * is re-fenced; same-height repaints are pure absolute-addressed writes and
+   * can never scroll anything.
+   */
   set(lines: string[]): void {
-    this.out.write(SYNC_ON);
-    this.erase();
-    this.lines = lines;
-    this.paint();
-    this.out.write(SYNC_OFF);
+    if (!lines.length) {
+      this.release();
+      return;
+    }
+    const h = this.rows();
+    const shown = lines.slice(0, Math.max(1, h - 3)).map((l) => truncateVisible(l, this.cols() - 1));
+    const newH = shown.length;
+
+    let seq = SYNC_ON + HIDE;
+    if (newH !== this.dockH) {
+      // Reset any previous fence (DECSTBM homes the cursor; save/restore keeps
+      // the content position), free the bottom rows by scrolling exactly as
+      // much as needed, then fence content into [1, h - newH].
+      seq += SAVE + REGION_RESET + RESTORE;
+      seq += '\n'.repeat(newH) + `\x1b[${newH}A`;
+      seq += SAVE + `\x1b[1;${h - newH}r` + RESTORE;
+    }
+    seq += SAVE;
+    for (let i = 0; i < newH; i++) {
+      seq += `\x1b[${h - newH + 1 + i};1H\x1b[2K${shown[i]!}`;
+    }
+    seq += RESTORE + SYNC_OFF;
+    this.out.write(seq);
+    this.dockH = newH;
   }
 
-  /** Write a scrollback line above the dock, keeping the dock pinned. */
+  /**
+   * Write a scrollback line above the dock. With the fence in place a plain
+   * write cannot touch the dock rows, so no repaint is needed.
+   */
   log(line: string): void {
-    this.out.write(SYNC_ON);
-    this.erase();
     this.out.write(line + '\n');
-    this.paint();
-    this.out.write(SYNC_OFF);
   }
 
-  /** Clear the dock and restore the cursor (before agent turns / on exit). */
+  /** Drop the fence, clear the dock rows, and restore the cursor. */
   release(): void {
-    this.out.write(SYNC_ON);
-    this.erase();
-    this.lines = [];
-    this.out.write(SHOW + SYNC_OFF);
+    if (!this.dockH) {
+      this.out.write(SHOW);
+      return;
+    }
+    const h = this.rows();
+    let seq = SYNC_ON;
+    seq += SAVE + REGION_RESET + RESTORE;
+    seq += SAVE;
+    for (let r = h - this.dockH + 1; r <= h; r++) seq += `\x1b[${r};1H\x1b[2K`;
+    seq += RESTORE + SHOW + SYNC_OFF;
+    this.out.write(seq);
+    this.dockH = 0;
   }
 }
