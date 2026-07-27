@@ -64,6 +64,7 @@ The constraint registry: machine-readable counterparts to the constraints stated
 | `COPPERHEAD_MODEL` | Default model. Overrides config, overridden by `--model`. |
 | `COPPERHEAD_CODEX_PATH` | Optional path to a `codex` executable. Defaults to `codex` on `PATH`; the SDK-bundled launcher is a fallback. |
 | `COPPERHEAD_CURSOR_PATH` | Optional path to the Cursor Agent CLI (`agent` / `cursor-agent`). Defaults to `agent` on `PATH`. |
+| `NO_COLOR` | Optional. Disables ANSI colors in `doctor` output; colors are also skipped automatically when stdout is not a terminal. |
 | `SYNAP_API_KEY` | Optional. Enables cross-run memory. Absent, copperhead behaves exactly as before and makes no Synap calls. |
 | `SYNAP_USER_ID` | Optional memory scope. Defaults to your `git config user.email`. |
 | `SYNAP_CUSTOMER_ID` | Optional memory scope. Defaults to `copperhead`; only matters on B2B Synap instances. |
