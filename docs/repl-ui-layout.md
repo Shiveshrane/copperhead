@@ -16,7 +16,7 @@ function in `src/agent/theme.ts`, so color changes are one-line edits.
  6| ▎ New repository?                                                      <- bar[copper] title[copper]
  7| ▎  `copperhead init` scaffolds docs/ from an existing schematic        <- bar[copper] body[default]
  8| ▎  `copperhead demo` runs the USB-C breakout create pipeline           <- bar[copper] body[default]
- 9| ▎ Docs: https://docs.copperhead.sh                                     <- bar[copper] body[default]
+ 9| ▎ Docs: https://docs.copperhead.sh                                     <- bar[copper] body[copper]
 10|                                                                        <- content region: echoes + agent
 ..|  ❯ rename net KEY_DAH to KEY_DASH                                      <-   output scroll here, oldest
 ..|  ▸ run_erc  clean — 0 violations                                       <-   scrolls off the top

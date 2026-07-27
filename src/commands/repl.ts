@@ -205,7 +205,7 @@ export function banner(opts: ReplOptions): string[] {
       ...callout('info', 'New repository?', [
         ' `copperhead init` scaffolds docs/ from an existing schematic',
         ' `copperhead demo` runs the USB-C breakout create pipeline',
-        'Docs: https://docs.copperhead.sh',
+        copper('Docs: https://docs.copperhead.sh'),
       ]),
       '',
     );
