@@ -238,6 +238,9 @@ describe('git guard (AC-3.8, AC-3.6)', () => {
       // The tracked rollback survived the failure, up to and including the
       // user's uncommitted edit replayed from the stash object.
       expect(await readFile(sch, 'utf8')).toBe(tracked.replace('KEY_DAH', 'KEY_EDITED'));
+      // The untracked file is the part that is genuinely lost: pinned so a
+      // future partial replay cannot pass this test by half-restoring.
+      expect(existsSync(path.join(repo, 'hand-written-notes.md'))).toBe(false);
     } finally {
       warn.mockRestore();
       await cleanup();

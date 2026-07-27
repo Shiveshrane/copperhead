@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile, chmod } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   resolveKicadCli,
   resetKicadCliCache,
+  setKicadFallbackBinaries,
   kicadCliVersion,
   KicadCliBadOverrideError,
   KicadCliMissingError,
@@ -28,6 +29,7 @@ describe('kicad-cli binary resolution', () => {
     if (saved === undefined) delete process.env.COPPERHEAD_KICAD_CLI;
     else process.env.COPPERHEAD_KICAD_CLI = saved;
     resetKicadCliCache();
+    setKicadFallbackBinaries();
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -78,10 +80,35 @@ describe('kicad-cli binary resolution', () => {
     // finds no macOS app bundle, and the run is refused with the install
     // instructions rather than a raw spawn error.
     delete process.env.COPPERHEAD_KICAD_CLI;
+    // The probe list is emptied rather than left to the host: with the real
+    // list, this assertion would fail on any macOS machine that has KiCad in
+    // /Applications, because the fallback would resolve and the run succeed.
+    setKicadFallbackBinaries([]);
     const savedPath = process.env.PATH;
     process.env.PATH = dir; // an empty directory: nothing resolvable on it
     try {
       await expect(kicadCliVersion()).rejects.toBeInstanceOf(KicadCliMissingError);
+    } finally {
+      process.env.PATH = savedPath;
+    }
+  });
+
+  it('falls back to an app-bundle path when PATH has no kicad-cli', async () => {
+    // The macOS install case, made testable on every platform by pointing the
+    // probe at a fixture. Covers the retry: the first spawn ENOENTs on the
+    // bare PATH name, the second runs the resolved bundle binary.
+    delete process.env.COPPERHEAD_KICAD_CLI;
+    const bundle = path.join(dir, 'KiCad.app', 'Contents', 'MacOS', 'kicad-cli');
+    await mkdir(path.dirname(bundle), { recursive: true });
+    await writeFile(bundle, '#!/bin/sh\necho "9.0.1"\n', 'utf8');
+    await chmod(bundle, 0o755);
+    setKicadFallbackBinaries([path.join(dir, 'absent', 'kicad-cli'), bundle]);
+    const savedPath = process.env.PATH;
+    process.env.PATH = dir;
+    try {
+      expect(await kicadCliVersion()).toBe('9.0.1');
+      // ...and the bundle path is cached, so the miss is not re-paid per call.
+      expect(resolveKicadCli()).toBe(bundle);
     } finally {
       process.env.PATH = savedPath;
     }

@@ -51,6 +51,8 @@ const FALLBACK_BINARIES = [
   '/Applications/KiCad-8.0/KiCad.app/Contents/MacOS/kicad-cli',
 ];
 
+let fallbackBinaries: readonly string[] = FALLBACK_BINARIES;
+
 let cachedBinary: string | null | undefined;
 
 /**
@@ -85,14 +87,16 @@ function envOverride(): string | null {
   return fromEnv;
 }
 
-/** After ENOENT on PATH, retry with a known macOS install path. */
+/**
+ * After ENOENT on PATH, retry with a known macOS install path.
+ *
+ * Deliberately does not re-read `COPPERHEAD_KICAD_CLI`: this is reached only
+ * when resolveKicadCli() cached the bare PATH name, which in turn happens only
+ * when the override was unset (set-but-missing throws there instead), so an
+ * override re-check here could never fire.
+ */
 function fallbackAfterMissing(): string {
-  const fromEnv = envOverride();
-  if (fromEnv) {
-    cachedBinary = fromEnv;
-    return fromEnv;
-  }
-  for (const candidate of FALLBACK_BINARIES) {
+  for (const candidate of fallbackBinaries) {
     if (existsSync(candidate)) {
       cachedBinary = candidate;
       return candidate;
@@ -126,6 +130,16 @@ async function runKicad(args: string[], opts?: { reject?: boolean }): Promise<Aw
 /** Test helper: clear the resolved-binary cache. */
 export function resetKicadCliCache(): void {
   cachedBinary = undefined;
+}
+
+/**
+ * Test helper: point the app-bundle probe at fixture paths, or call with no
+ * argument to restore the real list. Without this the fallback branch is only
+ * exercisable on a macOS host that happens to have KiCad installed, which
+ * makes the outcome depend on the developer's machine.
+ */
+export function setKicadFallbackBinaries(paths?: readonly string[]): void {
+  fallbackBinaries = paths ?? FALLBACK_BINARIES;
 }
 
 export async function kicadCliVersion(): Promise<string> {
