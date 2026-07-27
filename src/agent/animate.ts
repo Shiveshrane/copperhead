@@ -33,12 +33,14 @@ export function fiducialBootFrames(): string[][] {
 }
 
 /**
- * Startup reveal: quick fiducial power-on, then cascade the real banner lines.
+ * Startup reveal: fiducial power-on, then cascade the real banner lines.
+ * `slow` (first run in a repo) stretches the timings for a deliberate,
+ * recordable intro; later runs keep the quick version.
  */
 export async function revealBanner(
   lines: string[],
   write: (line: string) => void,
-  opts?: { out?: NodeJS.WriteStream },
+  opts?: { out?: NodeJS.WriteStream; slow?: boolean },
 ): Promise<void> {
   const out = opts?.out ?? process.stdout;
 
@@ -46,6 +48,11 @@ export async function revealBanner(
     for (const line of lines) write(line);
     return;
   }
+
+  const frameMs = opts?.slow ? 220 : 50;
+  const holdMs = opts?.slow ? 500 : 90;
+  const lineMs = (line: string): number =>
+    line.trim() === '' ? (opts?.slow ? 20 : 6) : opts?.slow ? 55 : 15;
 
   out.write(HIDE);
   try {
@@ -55,11 +62,11 @@ export async function revealBanner(
     out.write('\n');
     for (const row of frames[0]!) out.write(CLEAR + row + '\n');
     for (let i = 1; i < frames.length; i++) {
-      await sleep(50);
+      await sleep(frameMs);
       out.write(`\x1b[${frames[i]!.length}A`);
       for (const row of frames[i]!) out.write(CLEAR + row + '\n');
     }
-    await sleep(90);
+    await sleep(holdMs);
 
     // Erase boot block: leading newline + 3 mark rows.
     out.write('\x1b[4A');
@@ -68,7 +75,7 @@ export async function revealBanner(
 
     for (const line of lines) {
       write(line);
-      await sleep(line.trim() === '' ? 6 : 15);
+      await sleep(lineMs(line));
     }
   } finally {
     out.write(SHOW);

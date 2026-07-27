@@ -203,8 +203,8 @@ export function banner(opts: ReplOptions): string[] {
   if (!existsSync(path.join(path.resolve(opts.repoRoot), '.copperhead'))) {
     lines.push(
       ...callout('info', 'New repository?', [
-        '`copperhead init` scaffolds docs/ from an existing schematic',
-        '`copperhead demo` runs the USB-C breakout create pipeline',
+        ' `copperhead init` scaffolds docs/ from an existing schematic',
+        ' `copperhead demo` runs the USB-C breakout create pipeline',
         'Docs: https://docs.copperhead.sh',
       ]),
       '',
@@ -342,7 +342,9 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
   process.on('SIGINT', onSigint);
   process.once('exit', restoreScreen);
 
-  await revealBanner(banner(opts), log, { out: output as NodeJS.WriteStream });
+  // First run in a repo (no .copperhead/ yet): play the reveal slowly.
+  const firstRun = !existsSync(path.join(path.resolve(opts.repoRoot), '.copperhead'));
+  await revealBanner(banner(opts), log, { out: output as NodeJS.WriteStream, slow: firstRun });
 
   let turns = 0;
   const handleRequest = async (request: string): Promise<void> => {
