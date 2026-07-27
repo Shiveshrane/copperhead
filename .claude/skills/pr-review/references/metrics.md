@@ -16,7 +16,7 @@ Requirements and behavior:
 - Everything is computed against the merge base (`git merge-base origin/<base> <head>`), so a stale branch is never scored against the wrong point.
 - The base suite runs in a throwaway `git worktree` with a symlinked `node_modules`; the working tree is never switched. If base CI already reports the suite result, reading CI is cheaper than `--base-tests`.
 - If `@vitest/coverage-v8` is missing, the script installs it with `npm i -D --no-save` so `package.json` and the lockfile stay clean.
-- Generated files (`package-lock.json`, `dist/`, `*.snap`, `docs/.astro/`) are excluded from area splits and coverage, and reported on their own line.
+- Generated files (`package-lock.json`, `dist/`, `*.snap`, `node_modules/`, `docs/.astro/`) are excluded from area splits and coverage, and reported on their own line.
 
 ## What each metric means
 
@@ -24,7 +24,8 @@ Requirements and behavior:
 - **New vs net**: brand-new files and lines (net-new behavior that needs its own tests) vs edits to existing code. "New" carries the most unreviewed risk; call it out separately.
 - **Tests**: added test lines, and the suite result as pass/skip/fail at base and head. A source change adding zero test lines is a coverage flag unless it is untestable plumbing.
 - **Diff coverage** (the headline metric): the percentage of changed *executable* src lines exercised by the suite, from vitest v8 coverage intersected with the changed lines in the diff. Comment, type, and blank changed lines are excluded from the denominator. The uncovered `file:line` list is the input to the untested-surface findings: enumerate the new exported symbols, branches, and error/early-return paths those lines contain, and put each in the findings list, not just the metrics block.
-- **Deps**: added/removed dependency names when `package.json` changed. Run `npm audit` on base and head for the advisory delta when deps actually changed.
+- **Deps**: added (`+[...]`), removed (`-[...]`), and version-changed (`~[...]`, with before and after versions) dependencies when `package.json` changed. Run `npm audit` on base and head for the advisory delta when deps actually changed.
+- **CI**: pass/fail/pending counts across the PR's checks plus the failing and pending counts among required checks, from `gh pr checks --json bucket`. A failing required check is at least a medium finding.
 
 ## Manual fallback (script cannot run)
 
@@ -43,6 +44,7 @@ new vs net: X new files, Y modified; Z new src lines (the net-new surface)
 tests: +K test lines; suite P/S/F -> P'/S'/F' (pass/skip/fail, base -> head)
 diff coverage: C% of changed src lines exercised (measured | manual); uncovered: file:line, ...
 deps: <only if package.json changed>
+ci: P pass / F fail / N pending; required checks: F' failing, N' pending
 ```
 
-The uncovered-lines entry must reconcile with the untested-surface findings below it.
+The uncovered-lines entry must reconcile with the untested-surface findings below it. The block's uncovered entry truncates at 40 files; when it does, the script prints the complete per-file list in its detail output, and that full list is the one to reconcile against.

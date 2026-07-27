@@ -1,7 +1,7 @@
 ---
 name: pr-review
 description: Review a copperhead pull request against the repo's invariants and spec workflow. Use when the user asks to review a PR, e.g. /pr-review 28 or /pr-review <url>.
-allowed-tools: Bash(gh:*), Bash(git:*), Bash(node:*), Bash(openspec:*), Bash(npm:*), Bash(npx:*)
+allowed-tools: AskUserQuestion, Bash(gh:*), Bash(git:*), Bash(node:*), Bash(openspec:*), Bash(npm:*), Bash(npx:*)
 compatibility: Requires the gh CLI, authenticated against chouhanindustries/copperhead.
 metadata:
   author: copperhead
@@ -20,7 +20,7 @@ Review a pull request for this repository. Present the findings report to the us
    - `gh pr diff <n>` for the full diff; for large PRs, read it per file. Skip generated and vendored files (`package-lock.json`, `dist/`, `*.snap`, build output): note that they changed, but do not read them line by line or raise findings inside them.
    - **Prior passes and authorship**: check the fetched comments for an earlier automated pr-review pass. If one exists, reference it and report only what changed since (new commits, findings now resolved or still open), not a duplicate full report. If you (the reviewer) authored any commit under review, disclose it up front and treat those findings as self-review, which warrants more skepticism, not less.
 
-2. **Metrics, scripted**: start `node .claude/skills/pr-review/scripts/metrics.mjs <n>` in the background now and collect it before writing the report. It computes the entire metrics block deterministically: area-split change size, new-vs-net surface, suite pass/skip/fail, diff coverage with the uncovered `file:line` list, and dependency changes, each with its method stated. Add `--base-tests` only when the base suite result matters and base CI does not already report it; never check out the base branch in the working tree. If the script fails, fall back to the manual method in `references/metrics.md`. Never emit a number you did not derive; report unmeasured metrics as "not measured" with the reason.
+2. **Metrics, scripted**: start `node .claude/skills/pr-review/scripts/metrics.mjs <n>` in the background now and collect it before writing the report. It computes the entire metrics block deterministically: area-split change size, new-vs-net surface, suite pass/skip/fail, diff coverage with the uncovered `file:line` list, dependency changes, and the CI check state (pass/fail/pending counts plus failing required checks, via `gh pr checks`), each with its method stated. Add `--base-tests` only when the base suite result matters and base CI does not already report it; never check out the base branch in the working tree. If the script fails, fall back to the manual method in `references/metrics.md`. Never emit a number you did not derive; report unmeasured metrics as "not measured" with the reason.
 
 3. **General review**: follow `references/review-checklist.md` (adversarial inputs for parser and protocol code, mock-only runtime code, test determinism and assertions, scope creep, description accuracy).
 
@@ -36,7 +36,7 @@ Review a pull request for this repository. Present the findings report to the us
 
 5. **Spec coherence**: if the PR changes spec-level behavior, `openspec/specs/SPEC.md` and the active change artifacts (`proposal.md`, `design.md`, delta specs, `tasks.md`) must move together. Run `openspec validate build-copperhead-phase-1` when planning artifacts changed. A code-only PR that silently diverges from SPEC.md is a finding.
 
-6. **Verify before reporting**: for each candidate finding, read the surrounding code in the working tree and try to refute it; this is the stage where hunk context gets read in depth, so on large PRs spend the context reads here, on candidates, rather than on every hunk up front. Drop anything speculative or already handled elsewhere. Then work the script's uncovered-lines list: an uncovered new branch or error path is exactly where a real defect hides, so trace each one by hand before concluding it is fine, and enumerate the new exported symbols, branches, and error paths no test reaches as findings (the untested-surface list). The suite result comes from the script's actual run, never from assumption.
+6. **Verify before reporting**: for each candidate finding, read the surrounding code in the working tree and try to refute it; this is the stage where hunk context gets read in depth, so on large PRs spend the context reads here, on candidates, rather than on every hunk up front. Drop anything speculative or already handled elsewhere. Then work the script's uncovered-lines list, using the full per-file list printed in its detail output (the metrics block line truncates at 40 files): an uncovered new branch or error path is exactly where a real defect hides, so trace each one by hand before concluding it is fine, and enumerate the new exported symbols, branches, and error paths no test reaches as findings (the untested-surface list). The suite result comes from the script's actual run, never from assumption.
 
 **Output**
 

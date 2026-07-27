@@ -21,7 +21,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const EXEC_OPTS = { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 };
+// finite timeout so a hung subprocess (git fetch, vitest, npm i) cannot block forever
+const EXEC_OPTS = { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 10 * 60 * 1000 };
 
 function run(cmd, args, opts = {}) {
   return execFileSync(cmd, args, { ...EXEC_OPTS, ...opts });
@@ -33,6 +34,16 @@ function tryRun(cmd, args, opts = {}) {
     return run(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], ...opts });
   } catch {
     return null;
+  }
+}
+
+function tryRunCapture(cmd, args) {
+  // like tryRun, but keeps stdout on nonzero exit (gh pr checks exits nonzero
+  // whenever checks are failing or pending, with the JSON still on stdout)
+  try {
+    return run(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    return typeof e.stdout === 'string' && e.stdout ? e.stdout : null;
   }
 }
 
@@ -190,8 +201,9 @@ const totalChangedSrcLines = [...changedSrcLines.values()].reduce((s, v) => s + 
 
 // ---------- deps ----------
 
+const pkgJsonChanged = numstat.some((f) => f.path === 'package.json');
 let depsLine = null;
-if (numstat.some((f) => f.path === 'package.json')) {
+if (pkgJsonChanged) {
   const readDeps = (rev) => {
     const raw = tryRun('git', ['show', `${rev}:package.json`]);
     if (!raw) return null;
@@ -203,7 +215,42 @@ if (numstat.some((f) => f.path === 'package.json')) {
   if (before && after) {
     const addedDeps = Object.keys(after).filter((k) => !(k in before));
     const removedDeps = Object.keys(before).filter((k) => !(k in after));
-    depsLine = `deps: +[${addedDeps.join(', ') || 'none'}] -[${removedDeps.join(', ') || 'none'}] (package.json changed; run npm audit on base and head for the advisory delta)`;
+    const changedDeps = Object.keys(after)
+      .filter((k) => k in before && before[k] !== after[k])
+      .map((k) => `${k} ${before[k]} -> ${after[k]}`);
+    depsLine = `deps: +[${addedDeps.join(', ') || 'none'}] -[${removedDeps.join(', ') || 'none'}] ~[${changedDeps.join(', ') || 'none'}] (package.json changed; run npm audit on base and head for the advisory delta)`;
+  }
+}
+
+// ---------- ci checks ----------
+
+let ciLine = null;
+if (prNumber) {
+  const buckets = (raw) => {
+    if (!raw) return null;
+    try {
+      const c = { pass: 0, fail: 0, pending: 0, other: 0 };
+      for (const { bucket } of JSON.parse(raw)) {
+        if (bucket === 'pass') c.pass++;
+        else if (bucket === 'fail' || bucket === 'cancel') c.fail++;
+        else if (bucket === 'pending') c.pending++;
+        else c.other++;
+      }
+      return c;
+    } catch {
+      return null;
+    }
+  };
+  const all = buckets(tryRunCapture('gh', ['pr', 'checks', prNumber, '--json', 'bucket']));
+  const req = buckets(tryRunCapture('gh', ['pr', 'checks', prNumber, '--required', '--json', 'bucket']));
+  if (all) {
+    ciLine =
+      `ci: ${all.pass} pass / ${all.fail} fail / ${all.pending} pending` +
+      (all.other ? ` / ${all.other} other` : '') +
+      (req ? `; required checks: ${req.fail} failing, ${req.pending} pending` : '; required checks: none reported') +
+      ' (gh pr checks)';
+  } else {
+    notes.push('ci: not measured (gh pr checks returned no parseable JSON; check CI state manually)');
   }
 }
 
@@ -245,10 +292,11 @@ if (runTests && onHead) {
     try {
       req.resolve('@vitest/coverage-v8');
     } catch {
-      notes.push('installed @vitest/coverage-v8 with --no-save (not persisted to package.json)');
       if (tryRun('npm', ['i', '-D', '--no-save', '@vitest/coverage-v8'], { stdio: 'ignore' }) === null) {
         notes.push('diff coverage: not measured (could not install @vitest/coverage-v8)');
         doCov = false;
+      } else {
+        notes.push('installed @vitest/coverage-v8 with --no-save (not persisted to package.json)');
       }
     }
   }
@@ -289,7 +337,7 @@ if (runTests && onHead) {
         }
         if (miss.length) uncovered.set(file, miss.sort((x, y) => x - y));
       }
-      coverage = { executable, covered, pct: executable ? Math.round((covered / executable) * 1000) / 10 : 100, uncovered };
+      coverage = { executable, covered, pct: executable ? Math.round((covered / executable) * 1000) / 10 : null, uncovered };
     } else {
       notes.push('diff coverage: not measured (coverage-final.json missing)');
     }
@@ -307,6 +355,8 @@ if (runBaseTests && onHead) {
     symlinkSync(join(repoRoot, 'node_modules'), join(wt, 'node_modules'));
     baseSuite = runSuite(wt, false, null);
     if (!baseSuite) notes.push('base suite: not measured (vitest produced no JSON results in the worktree)');
+    if (baseSuite && pkgJsonChanged)
+      notes.push('base suite: ran against the head node_modules (symlinked), but package.json changed since the merge base, so this is not a clean dependency baseline');
   } catch (e) {
     notes.push(`base suite: not measured (worktree run failed: ${e.message?.split('\n')[0]})`);
   } finally {
@@ -347,16 +397,19 @@ block.push(
 if (gen.files) block.push(`generated (excluded from areas): ${gen.files} file(s), +${gen.a}/-${gen.d}`);
 block.push(`new vs net: ${addedFiles.length} new files (${addedSrcFiles.length} in src), ${numstat.length - addedFiles.length} modified; ${newSrcLines} new src lines (the net-new surface)`);
 block.push(`tests: +${testLines} test lines; suite ${suiteStr(baseSuite)} -> ${suiteStr(headSuite)} (pass/skip/fail, base -> head)`);
-if (coverage) {
+if (coverage && coverage.executable === 0) {
+  block.push('diff coverage: 0 executable changed src lines measured (every changed src line is a comment, type, or blank; measured via vitest v8)');
+} else if (coverage) {
   const unc = [...coverage.uncovered.entries()].map(([f, ls]) => `${f}:${compress(ls)}`);
   block.push(
     `diff coverage: ${coverage.pct}% of changed executable src lines exercised (${coverage.covered}/${coverage.executable}, measured via vitest v8)` +
-      (unc.length ? `; uncovered: ${unc.slice(0, 40).join(', ')}${unc.length > 40 ? `, +${unc.length - 40} more files` : ''}` : '')
+      (unc.length ? `; uncovered: ${unc.slice(0, 40).join(', ')}${unc.length > 40 ? `, +${unc.length - 40} more files (full list below)` : ''}` : '')
   );
 } else {
   block.push('diff coverage: not measured (see notes)');
 }
 if (depsLine) block.push(depsLine);
+if (ciLine) block.push(ciLine);
 
 console.log('== metrics block ==');
 console.log(block.join('\n'));
@@ -375,5 +428,12 @@ if (addedSrcFiles.length || modifiedSrcFiles.length) {
     console.log(`A ${p} +${f?.added ?? 0}`);
   }
   for (const f of modifiedSrcFiles) console.log(`M ${f.path} +${f.added}/-${f.removed}`);
+}
+
+if (coverage && coverage.uncovered.size) {
+  console.log('\n== uncovered changed src lines (full list) ==');
+  for (const [f, ls] of [...coverage.uncovered.entries()].sort((x, y) => x[0].localeCompare(y[0]))) {
+    console.log(`${f}: ${compress(ls)}`);
+  }
 }
 console.log(`\nchanged src lines total: ${totalChangedSrcLines} (fan-out threshold input: src +${areas.src.a}/-${areas.src.d})`);
