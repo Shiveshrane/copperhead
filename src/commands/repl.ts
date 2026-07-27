@@ -17,6 +17,8 @@ import { branchName, headCommit, isDirty, isGitRepo, uncommittedCount } from '..
 import { shortPath } from '../util/paths.js';
 import type { SelectItem } from '../util/select.js';
 import { KeyReader, promptWithSlashHints } from '../util/live-prompt.js';
+import { TerminalDock } from '../util/dock.js';
+import { callout } from '../agent/box.js';
 import { runCheck } from './check.js';
 import { demoTourText } from './demo.js';
 import {
@@ -81,6 +83,14 @@ export const SLASH_COMMANDS: SelectItem[] = [
   { value: '/clear', label: '/clear', description: 'clear the screen' },
   { value: '/help', label: '/help', description: 'list commands' },
   { value: '/quit', label: '/quit', description: 'leave the shell' },
+];
+
+/** Placeholder examples rotated through the empty input box. */
+const EXAMPLE_REQUESTS = [
+  'add reverse-polarity protection on VIN',
+  'rename net KEY_DAH to KEY_DASH',
+  'add a power LED on the 3V3 rail',
+  'add ESD diodes on the USB data lines',
 ];
 
 /** Bare words that must NOT start an agent run (common mistake: `clear` without `/`). */
@@ -184,24 +194,30 @@ function metaRow(label: string, value: string): string {
 export function banner(opts: ReplOptions): string[] {
   const repo = shortPath(path.resolve(opts.repoRoot));
   const cols = (opts.output as NodeJS.WriteStream | undefined)?.columns ?? process.stdout.columns ?? 80;
-  return [
+  const lines = [
     ...logoLockup({ version: opts.version, tagline: 'interactive shell', columns: cols }),
     metaRow('model', `${opts.model}  ${dim(`via ${opts.modelSource}`)}`),
     metaRow('kicad-cli', opts.kicadCliVersion),
     metaRow('repo', dim(repo)),
     '',
     dim('  Describe a board change in plain English.'),
-    dim('  Type `/` for commands · ↑/↓ to hover (description shows above the list)'),
-    dim('  /quit to leave · Ctrl+C interrupts a running turn'),
+    dim('  Type `/` for commands · Tab completes · Ctrl+C interrupts a running turn'),
     '',
   ];
+  if (!existsSync(path.join(path.resolve(opts.repoRoot), '.copperhead'))) {
+    lines.push(
+      ...callout('info', 'New repository?', [
+        '`copperhead init` scaffolds docs/ from an existing schematic',
+        '`copperhead demo` runs the USB-C breakout create pipeline',
+      ]),
+      '',
+    );
+  }
+  return lines;
 }
 
-/** phase 1 = bright chevron (pulse peak). */
-function promptPrefix(phase = 0): string {
-  const chevron = phase === 1 ? copper('›') : dim('›');
-  return `${copper('copperhead')} ${chevron} `;
-}
+/** Plain prompt text; the input box paints it copper. */
+const PROMPT = 'copperhead › ';
 
 function isTtyStream(input: NodeJS.ReadableStream, output: NodeJS.WritableStream): boolean {
   return Boolean((input as NodeJS.ReadStream).isTTY) && Boolean((output as NodeJS.WriteStream).isTTY);
@@ -477,15 +493,41 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
   };
 
   const keys = new KeyReader(input as NodeJS.ReadStream);
-  const ask = (): Promise<string | null> =>
-    promptWithSlashHints({
-      prompt: promptPrefix(),
-      promptFrame: (phase) => promptPrefix(phase),
+  const dock = new TerminalDock(output as NodeJS.WriteStream);
+
+  // Status-bar segments; git state refreshes after each agent turn.
+  let gitSeg = '';
+  const refreshGit = async (): Promise<void> => {
+    if (!(await isGitRepo(opts.repoRoot))) {
+      gitSeg = '';
+      return;
+    }
+    const [branch, dirty] = await Promise.all([
+      branchName(opts.repoRoot).catch(() => ''),
+      isDirty(opts.repoRoot).catch(() => false),
+    ]);
+    gitSeg = branch ? `${branch}${dirty ? '*' : ''}` : '';
+  };
+  await refreshGit();
+
+  let asked = 0;
+  const ask = (): Promise<string | null> => {
+    const example = EXAMPLE_REQUESTS[asked++ % EXAMPLE_REQUESTS.length]!;
+    return promptWithSlashHints({
+      prompt: PROMPT,
       commands: SLASH_COMMANDS,
       output: output as NodeJS.WriteStream,
+      dock,
+      placeholder: `Try "${example}"`,
+      pulse: true,
+      status: () => ({
+        left: dim('/ for commands · Tab completes · /quit to leave'),
+        right: `${copper('●')} ${dim([opts.model, gitSeg].filter(Boolean).join(' · '))}`,
+      }),
       readKey: () => keys.next(),
       drainPrintable: () => keys.drainPrintable(),
     });
+  };
 
   try {
     for (;;) {
@@ -519,6 +561,7 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
       } finally {
         keys.resume();
       }
+      await refreshGit();
       log('');
     }
   } finally {

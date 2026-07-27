@@ -95,20 +95,3 @@ export async function staggerWrite(
     await sleep(delayMs);
   }
 }
-
-/**
- * Pulse the prompt chevron while idle. Returns stop(). No-op without animation.
- */
-export function pulsePrompt(
-  out: NodeJS.WriteStream,
-  render: (phase: number) => string,
-): () => void {
-  if (!prefersAnimation()) return () => {};
-  let phase = 0;
-  const timer = setInterval(() => {
-    phase = (phase + 1) % 3;
-    out.write(CLEAR + render(phase) + SHOW);
-  }, 650);
-  timer.unref?.();
-  return () => clearInterval(timer);
-}

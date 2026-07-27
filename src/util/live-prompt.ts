@@ -1,39 +1,41 @@
 /**
- * TTY line prompt with live slash-command suggestions.
- * Typing `/` immediately shows matching commands under the caret; ↑/↓ + Enter
- * picks one — no need to press Enter on bare `/` first.
+ * Dock-based line prompt with live slash-command suggestions.
+ * The input renders inside a bordered box pinned to the bottom of the
+ * viewport (Claude Code-style), with an optional status bar underneath.
+ * Typing `/` shows matching commands under the box; ↑/↓ + Enter picks one.
  */
 
 import { copper, dim } from '../agent/theme.js';
-import { pulsePrompt } from '../agent/animate.js';
+import { prefersAnimation } from '../agent/animate.js';
+import { boxLines, inverse, statusBar, visibleWidth, wrapSpans, type Span } from '../agent/box.js';
+import { TerminalDock } from './dock.js';
 import type { SelectItem } from './select.js';
 
 export interface LivePromptOptions {
+  /** Plain-text prompt prefix; the box paints it (do not pre-color). */
   prompt: string;
-  /** Optional pulsing prompt frames (phase 0..n). */
-  promptFrame?: (phase: number) => string;
   commands: SelectItem[];
   output?: NodeJS.WriteStream;
   /** Next keypress; null means EOF. */
   readKey: () => Promise<string | null>;
   /**
    * Sync drain of already-queued printable chars (paste coalescing).
-   * Without this, a long paste repaints once per character and wrap debris
-   * stacks into many fake prompt lines.
+   * Without this, a long paste repaints once per character.
    */
   drainPrintable?: () => string;
+  /** Shared dock; an internal one is created over `output` when absent. */
+  dock?: TerminalDock;
+  /** Dim example text shown while the buffer is empty. */
+  placeholder?: string;
+  /** Status-bar halves, re-read on every repaint (pre-painted strings). */
+  status?: () => { left: string; right: string };
+  /** Blink the caret while idle (only when animation is enabled). */
+  pulse?: boolean;
 }
 
-const CLEAR_LINE = '\r\x1b[2K';
-const HIDE = '\x1b[?25l';
-const SHOW = '\x1b[?25h';
-/** Inverse video for the hovered dropdown row. */
-const INVERSE = '\x1b[7m';
-const RESET = '\x1b[0m';
-
-/** Visible width ignoring SGR; used for wrap-row accounting. */
+/** Visible width ignoring SGR; kept for existing callers/tests. */
 export function visibleLen(s: string): number {
-  return s.replace(/\x1b\[[0-9;]*m/g, '').length;
+  return visibleWidth(s);
 }
 
 /** How many terminal rows `prompt + buffer` occupies at `cols` width. */
@@ -49,8 +51,12 @@ function matchesFor(buffer: string, commands: SelectItem[]): SelectItem[] {
   return commands.filter((c) => c.value.startsWith(p));
 }
 
-/** Visible slash-menu lines (exported for tests). */
-export function suggestionLines(matches: SelectItem[], index: number): string[] {
+/**
+ * Visible slash-menu lines (exported for tests). Long lists are windowed to
+ * `maxVisible` rows around the hovered item so the dock always fits a
+ * standard 24-row terminal.
+ */
+export function suggestionLines(matches: SelectItem[], index: number, maxVisible = 8): string[] {
   if (!matches.length) return [dim('  (no matching commands)')];
   const clamped = Math.max(0, Math.min(index, matches.length - 1));
   const selected = matches[clamped]!;
@@ -64,19 +70,28 @@ export function suggestionLines(matches: SelectItem[], index: number): string[] 
     detail.push(`  ${copper(selected.label)}`);
   }
 
+  let start = 0;
+  if (matches.length > maxVisible) {
+    start = Math.min(Math.max(0, clamped - (maxVisible >> 1)), matches.length - maxVisible);
+  }
+  const end = Math.min(matches.length, start + maxVisible);
+
+  const rows = matches.slice(start, end).map((item, i0) => {
+    const i = start + i0;
+    const hovered = i === clamped;
+    const cursor = hovered ? copper('❯') : ' ';
+    const label = item.label.padEnd(width);
+    if (hovered) return `  ${cursor} ${inverse(copper(label))}`;
+    return `  ${cursor} ${dim(label)}`;
+  });
+
   return [
     ...detail,
     '',
     dim('  ↑/↓ hover · Enter select · Esc dismiss'),
-    ...matches.map((item, i) => {
-      const hovered = i === clamped;
-      const cursor = hovered ? copper('❯') : ' ';
-      const label = item.label.padEnd(width);
-      if (hovered) {
-        return `  ${cursor} ${INVERSE}${copper(label)}${RESET}`;
-      }
-      return `  ${cursor} ${dim(label)}`;
-    }),
+    ...(start > 0 ? [dim(`  ↑ ${start} more`)] : []),
+    ...rows,
+    ...(end < matches.length ? [dim(`  ↓ ${matches.length - end} more`)] : []),
   ];
 }
 
@@ -238,91 +253,71 @@ export function keySequence(keys: string[]): () => Promise<string | null> {
 }
 
 /**
- * Read one line. When the buffer starts with `/`, live suggestions appear
- * underneath. Returns the submitted line, a selected slash command, or null
- * on Ctrl+C / EOF.
+ * Read one line inside the bottom dock. When the buffer starts with `/`,
+ * live suggestions appear under the input box. Returns the submitted line,
+ * a selected slash command, or null on Ctrl+C / EOF.
  */
 export async function promptWithSlashHints(opts: LivePromptOptions): Promise<string | null> {
   const output = opts.output ?? process.stdout;
+  const dock = opts.dock ?? new TerminalDock(output);
   let buffer = '';
   let index = 0;
-  let paintedExtra = 0;
-  /** Rows occupied by the prompt+buffer (terminal wrap). */
-  let paintedInputRows = 1;
+  /** Caret blink phase (0 = visible). */
+  let phase = 0;
 
-  const cols = (): number =>
-    typeof (output as NodeJS.WriteStream).columns === 'number' && (output as NodeJS.WriteStream).columns!
-      ? (output as NodeJS.WriteStream).columns!
-      : 80;
+  const boxWidth = (): number => Math.max(10, dock.cols() - 1);
 
-  const eraseExtra = (): void => {
-    if (paintedExtra <= 0) return;
-    for (let i = 0; i < paintedExtra; i++) output.write('\n' + CLEAR_LINE);
-    output.write(`\x1b[${paintedExtra}A`);
-    paintedExtra = 0;
-  };
-
-  /** Clear prompt+buffer including soft-wrapped continuation rows. */
-  const clearInputSurface = (): void => {
-    if (paintedInputRows > 1) output.write(`\x1b[${paintedInputRows - 1}A`);
-    for (let i = 0; i < paintedInputRows; i++) {
-      output.write(CLEAR_LINE);
-      if (i < paintedInputRows - 1) output.write('\n');
+  const inputBoxLines = (): string[] => {
+    const w = boxWidth();
+    const spans: Span[] = [{ text: opts.prompt, paint: copper }];
+    if (buffer === '' && opts.placeholder) {
+      const ph = opts.placeholder;
+      spans.push({ text: ph.slice(0, 1) || ' ', paint: phase % 2 ? dim : inverse });
+      if (ph.length > 1) spans.push({ text: ph.slice(1), paint: dim });
+    } else {
+      spans.push({ text: buffer });
+      spans.push({ text: ' ', paint: phase % 2 ? undefined : inverse });
     }
-    if (paintedInputRows > 1) output.write(`\x1b[${paintedInputRows - 1}A`);
+    return boxLines(wrapSpans(spans, w - 4), w);
   };
 
-  const writeInput = (): void => {
-    const text = opts.prompt + buffer;
-    output.write(CLEAR_LINE + text + SHOW);
-    paintedInputRows = inputRowRows(opts.prompt, buffer, cols());
-  };
-
-  const paint = (): void => {
-    const matches = matchesFor(buffer, opts.commands);
-    if (index >= matches.length) index = Math.max(0, matches.length - 1);
-
-    eraseExtra();
-    clearInputSurface();
-    writeInput();
-
+  const renderDock = (): void => {
+    const rows: string[] = [...inputBoxLines()];
     if (buffer.startsWith('/')) {
-      const lines = suggestionLines(matches, index);
-      output.write(HIDE);
-      for (const line of lines) output.write('\n' + CLEAR_LINE + line);
-      paintedExtra = lines.length;
-      // Back to the last physical row of the input (immediately above suggestions).
-      output.write(`\x1b[${paintedExtra}A`);
-      clearInputSurface();
-      writeInput();
+      const matches = matchesFor(buffer, opts.commands);
+      if (index >= matches.length) index = Math.max(0, matches.length - 1);
+      rows.push(...suggestionLines(matches, index));
     }
+    if (opts.status) {
+      const { left, right } = opts.status();
+      rows.push(statusBar(` ${left}`, `${right} `, boxWidth()));
+    }
+    dock.set(rows);
   };
 
   const finish = (value: string | null): string | null => {
-    eraseExtra();
-    clearInputSurface();
-    // Commit the final value onto the prompt line so scrollback shows what
-    // actually ran (e.g. `/demo` after picking from the bare-`/` dropdown),
-    // not just the typed prefix.
-    if (value !== null) {
-      output.write(CLEAR_LINE + opts.prompt + value);
-    }
-    output.write('\n' + SHOW);
+    dock.release();
+    // Commit the submitted line into scrollback so history shows what
+    // actually ran (e.g. `/demo` picked from the bare-`/` dropdown).
+    if (value !== null) output.write(opts.prompt + value + '\n');
+    else output.write('\n');
     return value;
   };
 
-  paint();
+  let blink: ReturnType<typeof setInterval> | null = null;
+  if (opts.pulse && prefersAnimation()) {
+    blink = setInterval(() => {
+      phase = (phase + 1) % 2;
+      renderDock();
+    }, 650);
+    blink.unref?.();
+  }
+
+  renderDock();
 
   try {
     for (;;) {
-      // Pulse the chevron while idle at an empty prompt (no dropdown open).
-      let stopPulse: (() => void) | null = null;
-      if (buffer === '' && opts.promptFrame) {
-        const frameOf = opts.promptFrame;
-        stopPulse = pulsePrompt(output, (phase) => frameOf(phase));
-      }
       const raw = await opts.readKey();
-      stopPulse?.();
       if (raw === null) return finish(null);
       const key = normalizeNavKey(raw);
 
@@ -341,7 +336,7 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
         if (buffer.startsWith('/')) {
           buffer = '';
           index = 0;
-          paint();
+          renderDock();
         }
         continue;
       }
@@ -357,7 +352,7 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
           index = navUp
             ? (index - 1 + matches.length) % matches.length
             : (index + 1) % matches.length;
-          paint();
+          renderDock();
         }
         continue;
       }
@@ -366,7 +361,7 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
         const matches = matchesFor(buffer, opts.commands);
         if (matches.length >= 1) {
           buffer = matches[index]!.value;
-          paint();
+          renderDock();
         }
         continue;
       }
@@ -375,7 +370,7 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
         if (buffer.length) {
           buffer = buffer.slice(0, -1);
           index = 0;
-          paint();
+          renderDock();
         }
         continue;
       }
@@ -383,22 +378,22 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
       if (key === '\x15') {
         buffer = '';
         index = 0;
-        paint();
+        renderDock();
         continue;
       }
 
-      // When suggestions are open, j/k navigate (already normalized). Printable
-      // letters that aren't nav still type into the filter. Coalesce paste so
-      // we paint once per burst instead of once per character.
+      // Printable input; coalesce paste so we paint once per burst instead of
+      // once per character.
       if (key.length === 1 && key >= ' ') {
         buffer += key;
         if (opts.drainPrintable) buffer += opts.drainPrintable();
+        phase = 0; // keep the caret visible while typing
         index = 0;
-        paint();
+        renderDock();
       }
     }
   } finally {
-    eraseExtra();
-    output.write(SHOW);
+    if (blink) clearInterval(blink);
+    dock.release();
   }
 }
