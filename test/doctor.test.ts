@@ -136,4 +136,100 @@ describe('copperhead doctor', () => {
     const notReady = formatDoctor({ ok: false, checks: [] });
     expect(notReady[notReady.length - 1]).toMatch(/not ready/);
   });
+
+  it('formatDoctor wraps long detail and hint text within the given width', () => {
+    const lines = formatDoctor(
+      {
+        ok: false,
+        checks: [
+          {
+            name: 'provider',
+            status: 'fail',
+            detail: 'no model configured',
+            hint: 'pass --model codex, set COPPERHEAD_MODEL, set model in .copperhead/config.json, or provide OPENAI_API_KEY/ANTHROPIC_API_KEY',
+          },
+        ],
+      },
+      60,
+    );
+    expect(lines.length).toBeGreaterThan(3); // head + wrapped hint + footer
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(60);
+    // Continuation lines align under the start of the hint text.
+    const hintLine = lines.find((l) => l.includes('hint: '))!;
+    const contCol = hintLine.indexOf('hint: ') + 'hint: '.length;
+    const continuation = lines[lines.indexOf(hintLine) + 1];
+    expect(continuation.startsWith(' '.repeat(contCol))).toBe(true);
+    expect(continuation.charAt(contCol)).not.toBe(' ');
+  });
+
+  it('formatDoctor color mode only adds ANSI codes: stripping them yields the plain output', () => {
+    const report = {
+      ok: false,
+      checks: [
+        { name: 'node', status: 'ok' as const, detail: 'v20.0.0 (>= 20)' },
+        { name: 'provider', status: 'fail' as const, detail: 'no model configured', hint: 'set COPPERHEAD_MODEL' },
+      ],
+    };
+    const plain = formatDoctor(report, 80);
+    expect(plain.join('\n')).not.toContain('\u001b[');
+    const colored = formatDoctor(report, 80, true);
+    expect(colored.join('\n')).toContain('\u001b[31m'); // red FAIL tag
+    // eslint-disable-next-line no-control-regex
+    const stripped = colored.map((l) => l.replace(/\u001b\[[0-9]+m/g, ''));
+    expect(stripped).toEqual(plain);
+  });
+
+  it('reports a missing git as a failure with an install hint (does not throw)', async () => {
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      const r = await runDoctor({
+        repoRoot: repo,
+        model: 'gpt-5',
+        deps: deps({
+          env: { OPENAI_API_KEY: 'sk-x' },
+          gitVersion: async () => {
+            throw new Error('ENOENT');
+          },
+        }),
+      });
+      expect(r.ok).toBe(false);
+      const git = r.checks.find((c) => c.name === 'git')!;
+      expect(git.status).toBe('fail');
+      expect(git.hint).toMatch(/install git/i);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('with a config present, the project check reports the wired schematic and board', async () => {
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      await mkdir(path.join(repo, '.copperhead'), { recursive: true });
+      await writeFile(
+        path.join(repo, '.copperhead', 'config.json'),
+        JSON.stringify({ schematic: 'blinky.kicad_sch', board: null }),
+      );
+      const r = await runDoctor({ repoRoot: repo, model: 'gpt-5', deps: deps({ env: { OPENAI_API_KEY: 'sk-x' } }) });
+      const project = r.checks.find((c) => c.name === 'project')!;
+      expect(project.status).toBe('info');
+      expect(project.detail).toContain('blinky.kicad_sch');
+      expect(project.detail).toContain('not wired');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('the no-model hint does not repeat the "no model configured" detail', async () => {
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      const r = await runDoctor({ repoRoot: repo, deps: deps({ env: {} }) });
+      const provider = r.checks.find((c) => c.name === 'provider')!;
+      expect(provider.status).toBe('fail');
+      expect(provider.detail).toBe('no model configured');
+      expect(provider.hint).not.toContain('no model configured');
+      expect(provider.hint).toContain('COPPERHEAD_MODEL');
+    } finally {
+      await cleanup();
+    }
+  });
 });

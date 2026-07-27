@@ -133,7 +133,11 @@ program
     // with a missing tool still gets the full report.
     const report = await runDoctor({ repoRoot: repo, model: opts.model });
     if (program.opts().json) console.log(JSON.stringify(report, null, 2));
-    else for (const line of formatDoctor(report)) console.log(line);
+    else {
+      const color = process.stdout.isTTY === true && !process.env.NO_COLOR;
+      // || not ??: some non-interactive ptys report columns as 0.
+      for (const line of formatDoctor(report, process.stdout.columns || 80, color)) console.log(line);
+    }
     process.exit(report.ok ? 0 : 1);
   });
 
