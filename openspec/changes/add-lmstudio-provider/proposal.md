@@ -2,11 +2,11 @@
 
 ## Why
 
-copperhead's four model backends are all cloud or hosted-session: OpenAI (`gpt-5`) and Anthropic (`claude`) bill an API key per token, and Codex (`codex`) and Claude Code (`claude-code`) reuse a hosted subscription login. Every one of them requires an account with a remote vendor, so there is **no way to run copperhead against a model on the user's own machine** — which rules out privacy-sensitive designs, offline and air-gapped work, and zero-marginal-cost iteration.
+copperhead's model backends are all cloud or hosted-session: OpenAI (`gpt-5`) and Anthropic (`claude`) bill an API key per token, and Codex (`codex`), Claude Code (`claude-code`), and Cursor (`cursor`) reuse a hosted subscription login. Every one of them requires an account with a remote vendor, so there is **no way to run copperhead against a model on the user's own machine** — which rules out privacy-sensitive designs, offline and air-gapped work, and zero-marginal-cost iteration.
 
 LM Studio serves local models behind an OpenAI-compatible HTTP endpoint (default `http://localhost:1234/v1`), including OpenAI-style function/tool calling for capable models. copperhead already speaks that protocol — `src/agent/providers/openai.ts` does the full chat and tool-call mapping via the `openai` SDK. It is simply unreachable today, because `OpenAIProvider` hard-requires `OPENAI_API_KEY` (throws if unset) and exposes no base-URL override, so it always hits `api.openai.com`; and `makeProvider` (`src/agent/loop.ts:75`) has no local route.
 
-This change adds a fifth provider, selected by `--model lmstudio` (and `lmstudio:<model-id>`), that points the OpenAI-compatible client at a local server and needs **no API key of any kind**. Unlike `codex` and `claude-code` it requires no new dependency: it reuses the already-required `openai` package.
+This change adds a local provider, selected by `--model lmstudio` (and `lmstudio:<model-id>`), that points the OpenAI-compatible client at a local server and needs **no API key of any kind**. Unlike `codex` and `claude-code` it requires no new dependency: it reuses the already-required `openai` package.
 
 ## What Changes
 
@@ -40,5 +40,5 @@ This change adds a fifth provider, selected by `--model lmstudio` (and `lmstudio
 - `.env.example`, `docs/src/content/docs/reference/configuration.md`, `docs/src/content/docs/reference/cli.md`, `docs/src/content/docs/getting-started/quickstart.mdx`, `README.md` — document `lmstudio`, `LMSTUDIO_BASE_URL`, the tool-capable-model requirement, and the other-local-server generalization.
 - `test/lmstudio-provider.test.ts` — new offline suite (routing, endpoint default/override/precedence, no-cloud-key, no-fallback, model discovery and memoization, unreachable/no-model/tools-unsupported errors, 429 passthrough, native tool-call mapping, nudge cases) plus regression coverage for the refactored `OpenAIProvider`, all via an injected fake client with no network and no LM Studio install.
 - `test/agent-integration.test.ts` — opt-in live provider-parity entry gated on `COPPERHEAD_TEST_LMSTUDIO=1` (AC-3.10).
-- `openspec/specs/SPEC.md` — extend AC-3.10 to include `--model lmstudio`; add AC-3.12 (local model); note the fifth provider in §2 and §4.4 and the new env var in the `.env.example` reference.
+- `openspec/specs/SPEC.md` — extend AC-3.10 to include `--model lmstudio`; add AC-3.13 (local model); note the new provider in §2 and §4.4 and the new env var in the `.env.example` reference.
 - No new dependency, no changes to `check` (stays LLM-free/network-free), and no breaking changes to existing providers or CLI flags.
