@@ -258,4 +258,9 @@ describe('isNotFoundError helper', () => {
       Object.defineProperty(process, 'platform', { value: originalPlatform });
     }
   });
+
+  it('classifies a real execa spawn failure as not-found', async () => {
+    const err = await execa('copperhead-does-not-exist', []).catch((e) => e);
+    expect(isNotFoundError(err)).toBe(true);
+  });
 });
