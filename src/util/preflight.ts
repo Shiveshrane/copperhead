@@ -34,6 +34,9 @@ export function isNotFoundError(err: any): boolean {
         msg.includes('cannot find the path specified')
       );
     }
+    if (err.exitCode === 1) {
+      return msg.includes('is not recognized');
+    }
   }
   return false;
 }

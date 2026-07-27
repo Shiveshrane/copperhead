@@ -236,6 +236,11 @@ describe('isNotFoundError helper', () => {
 
 
 
+      expect(isNotFoundError({
+        exitCode: 1,
+        stderr: "'openspec' is not recognized as an internal or external command, operable program or batch file."
+      })).toBe(true);
+
       // Negative cases
       expect(isNotFoundError({
         exitCode: 1,
@@ -254,5 +259,10 @@ describe('isNotFoundError helper', () => {
   it('classifies a real execa spawn failure as not-found', async () => {
     const err = await execa('copperhead-does-not-exist', []).catch((e) => e);
     expect(isNotFoundError(err)).toBe(true);
+  });
+
+  it('classifies a non-rejecting execa failure result as not-found', async () => {
+    const res = await execa('copperhead-does-not-exist', [], { reject: false });
+    expect(isNotFoundError(res)).toBe(true);
   });
 });
