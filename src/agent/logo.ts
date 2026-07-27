@@ -11,9 +11,9 @@ import { copper } from './theme.js';
 /** 3-row quadrant-block via with long tracks; rows are equal width. */
 export function fiducialMark(): string[] {
   return [
-    '      ▄▟▙▄     ',
-    ' ██████  ██████',
-    '      ▀▜▛▀     ',
+    '    ▄▟▙▄   ',
+    ' ████  ████',
+    '    ▀▜▛▀   ',
   ];
 }
 
