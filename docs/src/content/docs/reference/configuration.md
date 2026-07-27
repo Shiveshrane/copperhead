@@ -64,7 +64,8 @@ The constraint registry: machine-readable counterparts to the constraints stated
 | `COPPERHEAD_MODEL` | Default model. Overrides config, overridden by `--model`. |
 | `COPPERHEAD_CODEX_PATH` | Optional path to a `codex` executable. Defaults to `codex` on `PATH`; the SDK-bundled launcher is a fallback. |
 | `COPPERHEAD_CURSOR_PATH` | Optional path to the Cursor Agent CLI (`agent` / `cursor-agent`). Defaults to `agent` on `PATH`. |
-| `LMSTUDIO_BASE_URL` | Optional. Where the local LM Studio server listens for `--model lmstudio` (see below). Defaults to `http://localhost:1234/v1`. No key involved. |
+| `LMSTUDIO_BASE_URL` | Optional. Where the LM Studio server listens for `--model lmstudio` (see below). Defaults to `http://localhost:1234/v1`. No key involved. |
+| `NO_COLOR` | Optional. Disables ANSI colors in `doctor` output; colors are also skipped automatically when stdout is not a terminal. |
 | `SYNAP_API_KEY` | Optional. Enables cross-run memory. Absent, copperhead behaves exactly as before and makes no Synap calls. |
 | `SYNAP_USER_ID` | Optional memory scope. Defaults to your `git config user.email`. |
 | `SYNAP_CUSTOMER_ID` | Optional memory scope. Defaults to `copperhead`; only matters on B2B Synap instances. |
@@ -92,7 +93,7 @@ Set any of the first three to `lmstudio` to run against a local model with no cl
 
 If none of these produce a model, the command exits with an error telling you the available ways to set one. `check` never needs a model, since it makes no LLM calls at all.
 
-Accepted model values (routing is by prefix; `makeProvider` checks `codex`, then `claude-code`, then `cursor`, then `claude`, then OpenAI):
+Accepted model values (routing is by prefix; `makeProvider` checks `codex`, then `claude-code`, then `cursor`, then `lmstudio`, then `claude`, then OpenAI):
 
 | Value | Provider | Key |
 | --- | --- | --- |

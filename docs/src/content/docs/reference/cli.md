@@ -84,6 +84,29 @@ ERC and DRC are skipped when no schematic or board is configured, rather than fa
 
 With `--json`, prints a result object with `ok` plus per-check detail for `erc`, `drc`, `drift`, `openspec`, and `constraints`.
 
+## `copperhead doctor`
+
+```bash
+copperhead doctor [--model <model>]
+```
+
+Environment preflight: checks whether this machine can actually run a copperhead command, **before** you start one. Unlike `check`, it looks at the model provider, the one thing `check` cannot, since `check` is contractually LLM-free. Makes **no LLM calls and no network requests**; the credential check is presence-only (it verifies a required API key is set, not that it authenticates).
+
+Checks, in order:
+
+- **node** — at least the version copperhead requires.
+- **kicad-cli** — present on PATH (a missing binary is reported, not thrown).
+- **git** — present on PATH (copperhead snapshots and commits its work).
+- **provider** — resolves the model the same way a run does (`--model` > `COPPERHEAD_MODEL` > config > available key) and checks its credential. Saved-login providers (`codex`, `cursor`, `claude-code`) need no key and report `info`.
+- **project** — informational: whether `.copperhead/config.json` exists and what it wires. Never blocks.
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | Ready — no critical check failed. |
+| `1` | Not ready — a `[FAIL]` item needs fixing. |
+
+With `--json`, prints `{ ok, checks: [{ name, status, detail, hint? }] }`.
+
 ## `copperhead sync`
 
 Verifies the whole design state and resolves drift. Two phases: a deterministic verify phase, then an LLM resolve phase.

@@ -10,6 +10,10 @@
 
 **Cursor for circuit boards.** An AI agent that designs, documents, and validates real PCBs from a prompt, working directly on existing KiCad repositories.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/chouhanindustries/copperhead/main/assets/copperhead.gif" alt="copperhead agent shell demo" width="720">
+</p>
+
 > **Status: early.** Phase 1 is implemented and the CLI runs. The [technical specification](openspec/specs/SPEC.md) is the source of truth; expect the surface to move before 1.0.
 
 Full documentation lives at [docs.copperhead.sh](https://docs.copperhead.sh).
@@ -28,6 +32,18 @@ It reads and edits real `.kicad_sch` / `.kicad_pcb` files (s-expression text), m
 ```bash
 npm install -g copperhead   # or: npx copperhead check
 ```
+
+### Bootstrap script (macOS and Linux)
+
+Prefer a one-command setup? [`install.sh`](install.sh) checks the prerequisites below, installs copperhead (globally via npm, or built from source when run inside a checkout), and verifies the result with `copperhead doctor`:
+
+```bash
+./install.sh                # interactive: asks before installing anything
+./install.sh --yes          # assume yes to the install prompts
+./install.sh --check-only   # report what is missing, install nothing
+```
+
+The script is conservative by design: it never runs `sudo` and never edits shell config; whenever it cannot act safely on its own it prints the exact command for you to run instead. Rerunning is safe: on a ready machine it installs nothing and exits 0.
 
 ### Requirements
 
@@ -88,12 +104,13 @@ Spec-gated in, verification-gated out: the design can't drift from its requireme
 copperhead init [--path hardware/]   # scaffold docs/ from an existing schematic; idempotent
 copperhead do "<change request>"     # the core loop: propose, edit, verify, propagate, commit
 copperhead check                     # ERC + DRC + doc-drift + spec validation; no LLM calls (alias: verify)
+copperhead doctor                    # env preflight: kicad-cli, git, node, provider credential; no LLM/network
 copperhead sync [--dry-run]          # verify the whole design state, resolve drift
 copperhead create --brief brief.md   # brief → full output package
 copperhead export bom --supplier jlcpcb   # supplier-ready ordering file from docs/BOM.md
 ```
 
-Global flags: `--repo <path>` (default: cwd) and `--json` for machine-readable output. `do` and `create` take `--model` and `--interactive`; `do` also takes `--dry-run`, `--max-turns`, and `--allow-dirty`.
+Global flags: `--repo <path>` (default: cwd) and `--json` for machine-readable output. `--model` is available on `do`, `sync`, `create`, and `doctor`; `--interactive` only on `do` and `create`; `do` also takes `--dry-run`, `--max-turns`, and `--allow-dirty`.
 
 `--model` accepts `gpt-5` (OpenAI), `claude` / `claude-<id>` (Anthropic API), `claude-code` / `claude-code:<id>` (Claude Code, saved login), `cursor` / `cursor:<id>` (Cursor Agent CLI, saved login), `codex` / `codex:<id>` (Codex CLI, saved login), and `lmstudio` / `lmstudio:<id>` (a local LM Studio server, no key). Routing is by prefix; `claude-code` is matched before the `claude` prefix, and `lmstudio` before the OpenAI catch-all.
 
