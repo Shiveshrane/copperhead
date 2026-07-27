@@ -6,6 +6,7 @@ import { createInterface } from 'node:readline/promises';
 import { loadConfig, resolveModel } from './config.js';
 import { runInit, InitError } from './memory/scaffold.js';
 import { runCheck } from './commands/check.js';
+import { runDoctor, formatDoctor } from './commands/doctor.js';
 import { syncVerify, syncResolve, formatSyncReport } from './commands/sync.js';
 import { runCreate } from './commands/create.js';
 import { runDemo, demoTourText } from './commands/demo.js';
@@ -168,6 +169,25 @@ program
   .alias('verify')
   .description('ERC + DRC + doc-drift + spec validation; no LLM calls; CI-safe')
   .action(checkAction);
+
+program
+  .command('doctor')
+  .description('env preflight: kicad-cli, git, node, and the model provider credential; no LLM, no network')
+  .option('--model <model>', 'model to check the provider credential for (default: resolved like a run)')
+  .action(async (opts: { model?: string }) => {
+    const repo = repoOf(program.opts());
+    // Unlike other commands, doctor never gates on kicad-cli being present:
+    // runDoctor probes it and reports a failure instead of throwing, so a user
+    // with a missing tool still gets the full report.
+    const report = await runDoctor({ repoRoot: repo, model: opts.model });
+    if (program.opts().json) console.log(JSON.stringify(report, null, 2));
+    else {
+      const color = process.stdout.isTTY === true && !process.env.NO_COLOR;
+      // || not ??: some non-interactive ptys report columns as 0.
+      for (const line of formatDoctor(report, process.stdout.columns || 80, color)) console.log(line);
+    }
+    process.exit(report.ok ? 0 : 1);
+  });
 
 program
   .command('do')
