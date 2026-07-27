@@ -15,7 +15,7 @@ import type { ModelSource } from '../config.js';
 import { loadConfig } from '../config.js';
 import { branchName, headCommit, isDirty, isGitRepo, uncommittedCount } from '../util/git.js';
 import { shortPath } from '../util/paths.js';
-import type { SelectItem } from '../util/select.js';
+import { pickModel, type SelectItem } from '../util/select.js';
 import { KeyReader, promptWithSlashHints } from '../util/live-prompt.js';
 import { TerminalDock } from '../util/dock.js';
 import { callout } from '../agent/box.js';
@@ -78,7 +78,7 @@ export const SLASH_COMMANDS: SelectItem[] = [
   { value: '/git', label: '/git', description: 'branch + dirty file list' },
   { value: '/runs', label: '/runs', description: 'recent .copperhead/runs/' },
   { value: '/last', label: '/last', description: 'newest run summary preview' },
-  { value: '/model', label: '/model', description: 'show the active model' },
+  { value: '/model', label: '/model', description: 'switch the session model (picker)' },
   { value: '/version', label: '/version', description: 'copperhead / kicad-cli / node' },
   { value: '/clear', label: '/clear', description: 'clear the screen' },
   { value: '/help', label: '/help', description: 'list commands' },
@@ -368,6 +368,18 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
     await handleRequest(seed);
   }
 
+  const keys = new KeyReader(input as NodeJS.ReadStream);
+  const dock = new TerminalDock(output as NodeJS.WriteStream);
+
+  /** Feed the session KeyReader into option pickers (selectMenu). */
+  async function* sessionKeys(): AsyncGenerator<string> {
+    for (;;) {
+      const k = await keys.next();
+      if (k === null) return;
+      yield k;
+    }
+  }
+
   const runSlash = async (cmd: string): Promise<'quit' | 'continue'> => {
     if (QUIT.has(cmd)) return 'quit';
     if (cmd === '/help' || cmd === '/h' || cmd === '/?') {
@@ -400,8 +412,19 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
       return 'continue';
     }
     if (cmd === '/model') {
+      // Claude Code-style option picker: switch the session model in place.
       log('');
-      log(metaRow('model', `${opts.model}  ${dim(`via ${opts.modelSource}`)}`));
+      const chosen = await pickModel({
+        output: output as NodeJS.WriteStream,
+        keys: sessionKeys(),
+      });
+      if (chosen && chosen !== opts.model) {
+        opts.model = chosen;
+        opts.modelSource = 'picker';
+        log(ok(`  model switched to ${chosen}`));
+      } else {
+        log(metaRow('model', `${opts.model}  ${dim(`via ${opts.modelSource}`)}`));
+      }
       log('');
       return 'continue';
     }
@@ -506,9 +529,6 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
     log(warn(`  unknown command ${cmd} — type / to see commands`));
     return 'continue';
   };
-
-  const keys = new KeyReader(input as NodeJS.ReadStream);
-  const dock = new TerminalDock(output as NodeJS.WriteStream);
 
   // Status-bar segments; git state refreshes after each agent turn.
   let gitSeg = '';

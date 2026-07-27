@@ -5,12 +5,22 @@ import {
   inverse,
   rule,
   statusBar,
+  truncateVisible,
   visibleWidth,
   wrapSpans,
 } from '../src/agent/box.js';
 import { keySequence, promptWithSlashHints, suggestionLines } from '../src/util/live-prompt.js';
 import { SLASH_COMMANDS } from '../src/commands/repl.js';
-import { setColorEnabled } from '../src/agent/theme.js';
+import { animateMarkAt, fiducialBootFrames } from '../src/agent/animate.js';
+import { fiducialMark } from '../src/agent/logo.js';
+import {
+  bold,
+  bright,
+  copper,
+  copperLight,
+  ruleDim,
+  setColorEnabled,
+} from '../src/agent/theme.js';
 
 function fakeOut(columns = 40): NodeJS.WriteStream & { written: string } {
   const state = { written: '', columns, rows: 24 };
@@ -126,6 +136,82 @@ describe('TerminalDock (scroll-region fence)', () => {
     expect(out.written).toContain('\x1b[?25h');
     expect(out.written).toContain('\x1b[24;1H\x1b[2K');
   });
+
+  it('parks the real cursor at the caret and hops back for content writes', () => {
+    const out = fakeOut(40); // 24 rows
+    const dock = new TerminalDock(out);
+    dock.set(['A', 'B'], { row: 2, col: 5 });
+    // Dock occupies rows 23-24; caret row 2 of the dock = screen row 24.
+    expect(out.written).toContain('\x1b[24;5H');
+    expect(out.written).toContain('\x1b[?25h');
+    const before = out.written.length;
+    dock.log('hello');
+    const logged = out.written.slice(before);
+    // While parked, log restores the content position, writes, re-saves.
+    expect(logged).toContain('\x1b8');
+    expect(logged).toContain('hello\n');
+    expect(logged).toContain('\x1b7');
+  });
+
+  it('repaint replays the last dock content and caret after an overdraw', () => {
+    const out = fakeOut(40);
+    const dock = new TerminalDock(out);
+    dock.set(['DOCK-ROW'], { row: 1, col: 3 });
+    const before = out.written.length;
+    dock.repaint();
+    const replay = out.written.slice(before);
+    expect(replay).toContain('DOCK-ROW');
+    expect(replay).toContain('\x1b[24;3H');
+  });
+});
+
+describe('theme + animation primitives', () => {
+  it('theme tokens are plain when color is off and painted when on', () => {
+    setColorEnabled(false);
+    expect(bright('x')).toBe('x');
+    expect(bold('x')).toBe('x');
+    expect(copperLight('x')).toBe('x');
+    expect(ruleDim('x')).toBe('x');
+    setColorEnabled(true);
+    try {
+      for (const f of [bright, bold, copperLight, ruleDim, copper]) {
+        expect(f('x')).toContain('\x1b[');
+        expect(f('x')).toContain('\x1b[0m');
+      }
+    } finally {
+      setColorEnabled(false);
+    }
+  });
+
+  it('truncateVisible cuts by visible width and closes SGR', () => {
+    expect(truncateVisible('abcdef', 4)).toBe('abcd');
+    expect(truncateVisible('ab', 4)).toBe('ab');
+    setColorEnabled(true);
+    try {
+      const cut = truncateVisible(copper('abcdef'), 3);
+      expect(visibleWidth(cut)).toBe(3);
+      expect(cut.endsWith('\x1b[0m')).toBe(true);
+    } finally {
+      setColorEnabled(false);
+    }
+  });
+
+  it('animateMarkAt is a no-op when animation is disabled', async () => {
+    setColorEnabled(false); // prefersAnimation() is false without color
+    const out = fakeOut(40);
+    await animateMarkAt(out, 2);
+    expect(out.written).toBe('');
+  });
+
+  it('boot frames match the mark width and end on the exact mark', () => {
+    setColorEnabled(false);
+    const mark = fiducialMark();
+    const frames = fiducialBootFrames();
+    for (const frame of frames) {
+      for (const row of frame) expect(visibleWidth(row)).toBe(visibleWidth(mark[0]!));
+    }
+    expect(frames[frames.length - 1]).toEqual(mark);
+  });
 });
 
 describe('suggestionLines windowing', () => {
@@ -236,5 +322,53 @@ describe('promptWithSlashHints in the dock', () => {
       readKey: keySequence(['\x03', 'x', '\r']),
     });
     expect(line).toBe('x');
+  });
+
+  it('paints the passive working row when a request is submitted', async () => {
+    const out = fakeOut(60);
+    const line = await promptWithSlashHints({
+      prompt: '> ',
+      commands: SLASH_COMMANDS,
+      output: out,
+      status: () => ({ left: 'l', right: 'r' }),
+      readKey: keySequence(['h', 'i', '\r']),
+    });
+    expect(line).toBe('hi');
+    expect(out.written).toContain('working — ctrl+c interrupts');
+  });
+
+  it('renders the right-aligned meta line above the input', async () => {
+    const out = fakeOut(60);
+    await promptWithSlashHints({
+      prompt: '> ',
+      commands: SLASH_COMMANDS,
+      output: out,
+      meta: () => '● model-y',
+      readKey: keySequence(['\r']),
+    });
+    expect(out.written).toContain('● model-y');
+  });
+
+  it('wraps the hovered description to a second row instead of truncating', () => {
+    const lines = suggestionLines(
+      [{ value: '/x', label: '/x', description: 'D'.repeat(120) }],
+      0,
+      10,
+      40,
+    );
+    expect(lines).toHaveLength(2);
+    expect(lines[1]!.trimEnd().endsWith('…')).toBe(true);
+    // Unhovered rows stay single-line.
+    const two = suggestionLines(
+      [
+        { value: '/x', label: '/x', description: 'D'.repeat(120) },
+        { value: '/y', label: '/y', description: 'E'.repeat(120) },
+      ],
+      0,
+      10,
+      40,
+    );
+    const yRows = two.filter((l) => l.includes('/y'));
+    expect(yRows).toHaveLength(1);
   });
 });

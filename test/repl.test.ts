@@ -384,6 +384,8 @@ describe('runRepl', () => {
     await new Promise((r) => setTimeout(r, 20));
     input.write('/model\n');
     await new Promise((r) => setTimeout(r, 20));
+    input.write('\x1b'); // cancel the model picker: keeps the current model
+    await new Promise((r) => setTimeout(r, 20));
     input.write('/check\n');
     await new Promise((r) => setTimeout(r, 20));
     input.write('/quit\n');
@@ -400,6 +402,46 @@ describe('runRepl', () => {
     expect(lines).toContain('check ok');
     expect(lines.join('\n')).toContain('session ended');
     expect(opts.runRequest).not.toHaveBeenCalled();
+  });
+
+  it('switches the session model via the /model picker', async () => {
+    setColorEnabled(false);
+    const { input, lines, opts } = baseOpts();
+    const done = runRepl(opts);
+
+    await new Promise((r) => setTimeout(r, 20));
+    input.write('/model\n');
+    await new Promise((r) => setTimeout(r, 30));
+    input.write('\x1b[B\r'); // hover codex, select
+    await new Promise((r) => setTimeout(r, 30));
+    input.write('/quit\n');
+
+    const res = await done;
+    expect(res.ok).toBe(true);
+    expect(lines.join('\n')).toContain('model switched to codex');
+    expect(opts.model).toBe('codex');
+    expect(opts.modelSource).toBe('picker');
+  });
+
+  it('owns the alternate screen and restores it on quit', async () => {
+    setColorEnabled(false);
+    const { input, output, opts } = baseOpts();
+    let raw = '';
+    output.on('data', (c) => {
+      raw += String(c);
+    });
+    const done = runRepl(opts);
+
+    await new Promise((r) => setTimeout(r, 20));
+    input.write('/quit\n');
+    await done;
+
+    const enter = raw.indexOf('\x1b[?1049h');
+    const leave = raw.indexOf('\x1b[?1049l');
+    expect(enter).toBeGreaterThanOrEqual(0);
+    expect(leave).toBeGreaterThan(enter);
+    expect(raw).toContain('\x1b[r'); // scroll fence reset before leaving
+    expect(raw).toContain('❯ '); // prompt chevron with nbsp
   });
 
   it('typing /demo via live hints then /quit works end-to-end', async () => {
