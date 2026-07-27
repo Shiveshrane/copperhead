@@ -115,14 +115,41 @@ describe('kicad-cli binary resolution', () => {
   });
 
   it('refuses when an override that existed at resolve time disappears mid-session', async () => {
-    const bin = path.join(dir, 'kicad-cli');
-    await writeFile(bin, '#!/bin/sh\nexit 0\n', 'utf8');
-    await chmod(bin, 0o755);
-    process.env.COPPERHEAD_KICAD_CLI = bin;
-    expect(resolveKicadCli()).toBe(bin);
-    await rm(bin, { force: true });
-    // An explicit override that vanished must not silently fall back to PATH.
-    await expect(kicadCliVersion()).rejects.toBeInstanceOf(KicadCliMissingError);
+    // The refusal only means something if a fallback was available to take:
+    // a working `kicad-cli` sits on PATH under a different name from the
+    // override, and the bundle probes are emptied, so PATH is the one route
+    // that could still succeed. Reaching KicadCliMissingError therefore proves
+    // the fallback was never attempted, rather than attempted and also empty.
+    const onPath = path.join(dir, 'path-bin');
+    await mkdir(onPath, { recursive: true });
+    const pathBinary = path.join(onPath, 'kicad-cli');
+    await writeFile(pathBinary, '#!/bin/sh\necho "8.0.4"\n', 'utf8');
+    await chmod(pathBinary, 0o755);
+
+    const override = path.join(dir, 'custom-kicad'); // deliberately not "kicad-cli"
+    await writeFile(override, '#!/bin/sh\necho "9.9.9"\n', 'utf8');
+    await chmod(override, 0o755);
+
+    setKicadFallbackBinaries([]);
+    const savedPath = process.env.PATH;
+    process.env.PATH = onPath;
+    try {
+      process.env.COPPERHEAD_KICAD_CLI = override;
+      expect(resolveKicadCli()).toBe(override);
+      await rm(override, { force: true });
+
+      // An explicit override that vanished must not silently fall back, even
+      // though the PATH binary right there would have answered.
+      await expect(kicadCliVersion()).rejects.toBeInstanceOf(KicadCliMissingError);
+
+      // Control: that PATH binary really is usable, so the refusal above was a
+      // refusal and not a second missing binary.
+      delete process.env.COPPERHEAD_KICAD_CLI;
+      resetKicadCliCache();
+      expect(await kicadCliVersion()).toBe('8.0.4');
+    } finally {
+      process.env.PATH = savedPath;
+    }
   });
 
   it('caches the resolved binary until the cache is reset', async () => {
