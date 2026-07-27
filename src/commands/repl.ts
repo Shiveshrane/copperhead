@@ -7,7 +7,7 @@
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import type { ProgressRenderer } from '../agent/render.js';
-import { bold, bright, copper, dim, err, ok, warn } from '../agent/theme.js';
+import { bold, copper, dim, err, ok, warn } from '../agent/theme.js';
 import { revealBanner, staggerWrite } from '../agent/animate.js';
 import { runAgentLoop, type BudgetExhaustedStats, type RunResult } from '../agent/loop.js';
 import type { ModelSource } from '../config.js';
@@ -195,8 +195,8 @@ export function banner(opts: ReplOptions): string[] {
   const mark = ['      │    ', '  ────◯────', '      │    '];
   const info = [
     `${bold('copperhead')} ${dim(`v${opts.version}`)}`,
-    bright(`${opts.model} via ${opts.modelSource} · kicad-cli ${opts.kicadCliVersion}`),
-    bright(repo),
+    dim(`${opts.model} via ${opts.modelSource} · kicad-cli ${opts.kicadCliVersion}`),
+    dim(repo),
   ];
   const lines = ['', ...mark.map((m, i) => `${copper(m)}  ${info[i]!}`), ''];
   if (!existsSync(path.join(path.resolve(opts.repoRoot), '.copperhead'))) {
