@@ -8,7 +8,7 @@
  */
 
 import { rule, statusBar } from './box.js';
-import { copper, dim, styleOutcome, toolLine, warn } from './theme.js';
+import { copper, copperLight, dim, styleOutcome, toolLine, warn } from './theme.js';
 import { fmtDuration, fmtTokens, turnMarker, type ProgressRenderer } from './render.js';
 import type { TerminalDock } from '../util/dock.js';
 
@@ -58,11 +58,14 @@ export class DockRenderer implements ProgressRenderer {
     this.emit(toolLine(name, firstLine));
   }
 
+  private turnStartMs = Date.now();
+
   turnStart(turn: number, maxTurns: number, tokensIn: number, tokensOut: number): void {
     if (turn === 1) {
       this.startMs = Date.now();
       this.runSeed++;
     }
+    this.turnStartMs = Date.now();
     this.turn = turn;
     this.maxTurns = maxTurns;
     this.tokensIn = tokensIn;
@@ -108,8 +111,17 @@ export class DockRenderer implements ProgressRenderer {
   private paint(): void {
     const w = Math.max(10, this.dock.cols() - 1);
     const spinner = copper(FRAMES[this.frame % FRAMES.length]!);
-    // Claude Code-style working word, board-shop themed, animated dots.
-    const word = WORKING[(this.runSeed + this.turn) % WORKING.length]!;
+    // Claude Code-style working word, board-shop themed: rotates every ~6s
+    // while a turn runs, with a shimmering highlight sweeping the letters.
+    const wordIdx =
+      (this.runSeed + this.turn + Math.floor((Date.now() - this.turnStartMs) / 6000)) %
+      WORKING.length;
+    const plain = WORKING[wordIdx]!;
+    const sweep = this.frame % (plain.length + 4);
+    const word = plain
+      .split('')
+      .map((ch, i) => (Math.abs(i - sweep) <= 1 ? copperLight(ch) : copper(ch)))
+      .join('');
     const dots = '.'.repeat(1 + (this.frame % 3));
     const parts = [
       dim(`turn ${this.turn}/${this.maxTurns}`),
@@ -125,7 +137,7 @@ export class DockRenderer implements ProgressRenderer {
     this.dock.set([
       ...(meta ? [statusBar('', `${meta} `, w)] : []),
       rule(w),
-      `${spinner} ${copper(word)}${dots} ${dim('· ')}${parts.join(dim(' · '))}`,
+      `${spinner} ${word}${dots} ${dim('· ')}${parts.join(dim(' · '))}`,
       rule(w),
       ...(hints ? [statusBar(`  ${hints}`, '', w)] : []),
     ]);

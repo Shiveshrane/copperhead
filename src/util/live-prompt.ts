@@ -179,9 +179,13 @@ export class KeyReader {
     input.setEncoding('utf8');
 
     this.onData = (c: string | Buffer): void => {
-      // While paused (agent run in flight), let the OS deliver Ctrl+C as SIGINT
-      // instead of queuing \x03 — otherwise the user cannot interrupt a turn.
-      if (this.paused) return;
+      // While paused (agent run in flight): forward Ctrl+C as a real SIGINT
+      // so the user can interrupt the turn; swallow everything else so typed
+      // keys are neither queued nor echoed.
+      if (this.paused) {
+        if (String(c).includes('\x03')) process.kill(process.pid, 'SIGINT');
+        return;
+      }
       pushKeys(this.pending, String(c), (key) => {
         const waiter = this.waiters.shift();
         if (waiter) waiter(key);
@@ -227,17 +231,18 @@ export class KeyReader {
   }
 
   /**
-   * Release raw mode so Ctrl+C becomes SIGINT again (needed while an agent
-   * turn owns the terminal). Drop any typed-ahead keys.
+   * Swallow keys while an agent turn owns the terminal. Raw mode stays ON:
+   * cooked mode would echo typed keys (PgUp becomes `^[[5~` garbage on the
+   * screen); instead Ctrl+C is forwarded as a real SIGINT and everything
+   * else is discarded.
    */
   pause(): void {
     this.paused = true;
     this.queue.length = 0;
     this.pending.buf = '';
-    if (typeof this.input.setRawMode === 'function') this.input.setRawMode(false);
   }
 
-  /** Re-enter raw mode for the next prompt. */
+  /** Resume delivering keys to the prompt. */
   resume(): void {
     this.paused = false;
     if (typeof this.input.setRawMode === 'function') this.input.setRawMode(true);
