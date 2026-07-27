@@ -29,6 +29,18 @@ It reads and edits real `.kicad_sch` / `.kicad_pcb` files (s-expression text), m
 npm install -g copperhead   # or: npx copperhead check
 ```
 
+### Bootstrap script (macOS and Linux)
+
+Prefer a one-command setup? [`install.sh`](install.sh) checks the prerequisites below, installs copperhead (globally via npm, or built from source when run inside a checkout), and verifies the result with `copperhead doctor`:
+
+```bash
+./install.sh                # interactive: asks before installing anything
+./install.sh --yes          # assume yes to the install prompts
+./install.sh --check-only   # report what is missing, install nothing
+```
+
+The script is conservative by design: it never runs `sudo` and never edits shell config; whenever it cannot act safely on its own it prints the exact command for you to run instead. Rerunning is safe: on a ready machine it installs nothing and exits 0.
+
 ### Requirements
 
 - Node.js ≥ 20
