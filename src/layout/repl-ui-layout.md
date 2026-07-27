@@ -45,7 +45,7 @@ function in `src/agent/theme.ts`, so color changes are one-line edits.
 ```text
 26|                                                     ● claude · main*   <- meta stays
 27|──────────────────────────────────────────────────────────────────────
-28|⠹ Reflowing.. · turn 2/40 · 1.2k in / 300 out · 12s · model call        <- spinner+word[copper] stats[dim] busy[warn]
+28|⠹ Reflowing...              turn 2/40 · 1.2k in / 300 out · 12s · ERC   <- word left[copper], stats right[dim] busy[warn]
 29|──────────────────────────────────────────────────────────────────────
 30|  ctrl+c interrupts the run · output above scrolls into history
 ```
@@ -53,14 +53,16 @@ function in `src/agent/theme.ts`, so color changes are one-line edits.
 The working word is a PCB term (Routing, Etching, Reflowing, Soldering,
 Drilling, Plating, Probing, Fluxing, Tinning, Laminating, Silkscreening,
 Panelizing), one per turn, with animated dots: Claude Code's working verbs,
-board-shop edition. Durable output (tool lines, turn markers, the outcome)
+board-shop edition; on rotation the old word crossfades char by char
+through `_` slots, dots included. Durable output (tool lines, turn markers, the outcome)
 scrolls in the content region; the observability row never moves. Between
 submit and the first turn a passive `… working` row shows briefly.
 
 First Ctrl+C at the prompt: input clears, row 30 becomes `press ctrl+c again to exit` [warn].
 
 History: every content line is kept in a session buffer (cap 5000). PgUp at
-the prompt scrolls the content region back through it, PgDn scrolls forward,
+the prompt scrolls the content region back through it (arrow keys / mouse
+wheel line-scroll too at an empty prompt), PgDn scrolls forward,
 any other key snaps back to the live tail; row 30 shows
 `history ↑N · pgup/pgdn scroll · any key returns` while scrolled. The same
 lines are mirrored by default to `.copperhead/runs/repl-<timestamp>.log`
@@ -117,8 +119,10 @@ Standard take:
 
 1. Let the banner settle and the via mark pulse
 2. Type `/`, hover a few commands with the arrow keys, Esc to dismiss
-3. Type `rename net KEY_DAH to KEY_DASH`, Enter, let the mock run play (~9s:
-   propose, validate, anchored edits, ERC clean, done + commit line)
+3. Type `rename net KEY_DAH to KEY_DASH`, Enter, let the mock run play
+   (~17s, four sections: propose, edit, verify, remember, each closed by a
+   summary line; the pinned observability row animates and the working word
+   morphs at each section)
 4. `/check` for the mock green ERC/DRC/drift pass
 5. Ctrl+C twice to exit
 

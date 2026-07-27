@@ -401,7 +401,7 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
       renderDock();
       continue;
     }
-    if (scrollOffset > 0) {
+    if (scrollOffset > 0 && key !== 'up' && key !== 'down') {
       scrollOffset = 0;
       paintHistory();
       renderDock();
@@ -449,6 +449,14 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
         index = navUp
           ? (index - 1 + matches.length) % matches.length
           : (index + 1) % matches.length;
+        renderDock();
+      } else if (buffer === '' && opts.history) {
+        // Mouse wheels send arrow keys in the alternate screen: line-scroll
+        // the session history at an empty prompt.
+        const hist = opts.history();
+        const maxOff = Math.max(0, hist.length - dock.contentRows());
+        scrollOffset = navUp ? Math.min(maxOff, scrollOffset + 2) : Math.max(0, scrollOffset - 2);
+        paintHistory();
         renderDock();
       }
       continue;

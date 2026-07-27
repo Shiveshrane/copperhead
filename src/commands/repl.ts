@@ -57,7 +57,11 @@ export interface ReplOptions {
   /** Injected runner (tests / demo). Defaults to runAgentLoop. The second
    *  argument is the session logger: lines written through it land in the
    *  content region and the scrollable history. */
-  runRequest?: (request: string, log?: (line: string) => void) => Promise<Pick<RunResult, 'outcome'>>;
+  runRequest?: (
+    request: string,
+    log?: (line: string) => void,
+    renderer?: ProgressRenderer,
+  ) => Promise<Pick<RunResult, 'outcome'>>;
   /** Injected /check (tests). */
   runCheckCmd?: (log?: (line: string) => void) => Promise<void>;
 }
@@ -350,7 +354,7 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
       return { ok: false, turns: 0 };
     }
     try {
-      const res = await runOne(seed, log);
+      const res = await runOne(seed, log, opts.renderer);
       return { ok: res.outcome !== 'failure', turns: 1 };
     } catch (e) {
       log(err((e as Error).message));
@@ -385,7 +389,7 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
   let turns = 0;
   const handleRequest = async (request: string): Promise<void> => {
     try {
-      const res = await runOne(request, log);
+      const res = await runOne(request, log, opts.renderer);
       turns++;
       if (res.outcome === 'failure') {
         log(dim('(session continues — fix the issue or try another request)'));

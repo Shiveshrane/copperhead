@@ -429,7 +429,7 @@ describe('runRepl', () => {
       runRequest,
     });
     expect(res).toEqual({ ok: true, turns: 1 });
-    expect(runRequest).toHaveBeenCalledWith('add ESD diodes', expect.any(Function));
+    expect(runRequest).toHaveBeenCalledWith('add ESD diodes', expect.any(Function), expect.anything());
   });
 
   it('handles /help /demo /examples /model /check /quit on a TTY', async () => {
@@ -536,7 +536,7 @@ describe('runRepl', () => {
 
     const res = await done;
     expect(res).toEqual({ ok: true, turns: 1 });
-    expect(opts.runRequest).toHaveBeenCalledWith('rename net KEY_DAH to KEY_DASH', expect.any(Function));
+    expect(opts.runRequest).toHaveBeenCalledWith('rename net KEY_DAH to KEY_DASH', expect.any(Function), expect.anything());
     expect(lines.join('\n')).toContain('session ended');
     void output; // keep stream alive for typing
   });

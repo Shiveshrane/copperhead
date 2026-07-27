@@ -173,7 +173,7 @@ export class DockRenderer implements ProgressRenderer {
     this.dock.set([
       ...(meta ? [statusBar('', `${meta} `, w)] : []),
       rule(w),
-      statusBar('', `${spinner} ${word} ${dim('· ')}${parts.join(dim(' · '))} `, w),
+      statusBar(`${spinner} ${word}`, `${parts.join(dim(' · '))} `, w),
       rule(w),
       ...(hints ? [statusBar(`  ${hints}`, '', w)] : []),
     ]);
