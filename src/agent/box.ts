@@ -4,7 +4,7 @@
  * colored segments never break padding or wrap accounting.
  */
 
-import { copper, dim, err, isColorEnabled, warn } from './theme.js';
+import { copper, err, isColorEnabled, ruleDim, warn } from './theme.js';
 
 const SGR = /\x1b\[[0-9;]*m/g;
 
@@ -52,9 +52,9 @@ export function wrapSpans(spans: Span[], width: number): string[] {
   return lines;
 }
 
-/** Full-width dim horizontal rule (the input-area separators). */
+/** Full-width horizontal rule (the input-area separators), #888888. */
 export function rule(width: number): string {
-  return dim('─'.repeat(Math.max(1, width)));
+  return ruleDim('─'.repeat(Math.max(1, width)));
 }
 
 /** Truncate to a visible width, keeping SGR sequences intact and closed. */

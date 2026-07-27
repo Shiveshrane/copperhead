@@ -1,49 +1,24 @@
 /**
- * Terminal lockup derived from the copperhead brand mark (PCB fiducial:
- * circle + crosshairs) used on https://docs.copperhead.sh/ and
- * docs/public/favicon.svg — copper `#b87333` on dark.
+ * Terminal block-art mark derived from the website logo
+ * (docs/public/favicon.svg and docs.copperhead.sh): a PCB fiducial, ring plus
+ * four crosshair ticks, copper #b87333 on dark.
  */
 
-import { copper, dim } from './theme.js';
-import { traceRule } from './animate.js';
-
-/** Narrow 3-line fiducial glyph (no wordmark). */
-export function fiducialLines(): string[] {
-  return [
-    '      │',
-    '  ────◯────',
-    '      │',
-  ].map((line) => copper(line));
-}
+import { copper } from './theme.js';
 
 /**
- * Logo + wordmark lockup for REPL / attended startup.
- * Falls back to a one-line wordmark when the terminal is very narrow.
+ * 3-row quadrant-block fiducial (Claude Code-style pixel mark). Rows are
+ * equal width so a banner lockup can put text beside them.
  */
-export function logoLockup(opts: {
-  version: string;
-  tagline?: string;
-  columns?: number;
-}): string[] {
-  const tag = opts.tagline ?? 'interactive shell';
-  const cols = opts.columns ?? process.stdout.columns ?? 80;
-
-  if (cols < 40) {
-    return [`${copper('copperhead')}  ${dim(`v${opts.version} · ${tag}`)}`, ''];
-  }
-
-  // Side-by-side: fiducial mark | wordmark + meta (matches docs lockup layout).
-  const mark = ['      │', '  ────◯────', '      │'];
-  const words = [
-    '',
-    `${copper('copperhead')}  ${dim(`v${opts.version}`)}`,
-    dim(tag),
-  ];
-
+export function fiducialMark(): string[] {
   return [
-    '',
-    ...mark.map((m, i) => `${copper(m)}  ${words[i] ?? ''}`),
-    traceRule(34),
-    '',
+    '  ▄▟▙▄  ',
+    '███  ███',
+    '  ▀▜▛▀  ',
   ];
+}
+
+/** The mark painted in brand copper. */
+export function fiducialLines(): string[] {
+  return fiducialMark().map((line) => copper(line));
 }

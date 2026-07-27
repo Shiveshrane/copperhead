@@ -22,13 +22,13 @@ const CLEAR = '\r\x1b[2K';
 const SHOW = '\x1b[?25h';
 const HIDE = '\x1b[?25l';
 
-/** Growing fiducial frames (3 rows). Exported for tests. */
+/** Growing fiducial frames (3 rows), converging on the block mark. Exported for tests. */
 export function fiducialBootFrames(): string[][] {
   return [
-    ['           ', '      ·      ', '           '],
-    ['           ', '      │      ', '           '],
-    ['      │      ', '   ──◯──   ', '      │      '],
-    ['      │      ', '  ────◯────  ', '      │      '],
+    ['        ', '   ▄▄   ', '        '],
+    ['  ▄▄▄▄  ', '  █  █  ', '  ▀▀▀▀  '],
+    ['  ▄▟▙▄  ', ' ██  ██ ', '  ▀▜▛▀  '],
+    ['  ▄▟▙▄  ', '███  ███', '  ▀▜▛▀  '],
   ].map((frame) => frame.map((row) => copper(row)));
 }
 

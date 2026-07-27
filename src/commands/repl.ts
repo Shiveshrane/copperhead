@@ -8,6 +8,7 @@ import path from 'node:path';
 import { existsSync } from 'node:fs';
 import type { ProgressRenderer } from '../agent/render.js';
 import { bold, copper, dim, err, ok, warn } from '../agent/theme.js';
+import { fiducialMark } from '../agent/logo.js';
 import { revealBanner, staggerWrite } from '../agent/animate.js';
 import { runAgentLoop, type BudgetExhaustedStats, type RunResult } from '../agent/loop.js';
 import type { ModelSource } from '../config.js';
@@ -192,7 +193,7 @@ function metaRow(label: string, value: string): string {
 /** Exported for tests. Claude Code-style lockup: mark left, three meta lines right. */
 export function banner(opts: ReplOptions): string[] {
   const repo = shortPath(path.resolve(opts.repoRoot));
-  const mark = ['      │    ', '  ────◯────', '      │    '];
+  const mark = fiducialMark();
   const info = [
     `${bold('copperhead')} ${dim(`v${opts.version}`)}`,
     dim(`${opts.model} via ${opts.modelSource} · kicad-cli ${opts.kicadCliVersion}`),
@@ -204,6 +205,7 @@ export function banner(opts: ReplOptions): string[] {
       ...callout('info', 'New repository?', [
         '`copperhead init` scaffolds docs/ from an existing schematic',
         '`copperhead demo` runs the USB-C breakout create pipeline',
+        'Docs: https://docs.copperhead.sh',
       ]),
       '',
     );
@@ -211,8 +213,8 @@ export function banner(opts: ReplOptions): string[] {
   return lines;
 }
 
-/** Plain prompt text; the input area paints it copper. */
-const PROMPT = '❯ ';
+/** Plain prompt text; the input area paints it copper (nbsp after ❯, like Claude Code). */
+const PROMPT = '❯ ';
 
 function isTtyStream(input: NodeJS.ReadableStream, output: NodeJS.WritableStream): boolean {
   return Boolean((input as NodeJS.ReadStream).isTTY) && Boolean((output as NodeJS.WriteStream).isTTY);
@@ -528,7 +530,6 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
       output: output as NodeJS.WriteStream,
       dock,
       placeholder: `Try "${example}"`,
-      pulse: true,
       status: () => ({
         left: dim('/ for commands · tab to complete · ctrl+c twice to quit'),
         right: dim(`In ${path.basename(path.resolve(opts.repoRoot))}`),

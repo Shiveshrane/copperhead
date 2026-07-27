@@ -5,9 +5,8 @@
  * Typing `/` shows matching commands under the box; ↑/↓ + Enter picks one.
  */
 
-import { bright, copper, dim, warn } from '../agent/theme.js';
-import { prefersAnimation } from '../agent/animate.js';
-import { inverse, rule, statusBar, visibleWidth, wrapSpans, type Span } from '../agent/box.js';
+import { bright, copper, copperLight, dim, warn } from '../agent/theme.js';
+import { rule, statusBar, visibleWidth, wrapSpans, type Span } from '../agent/box.js';
 import { TerminalDock } from './dock.js';
 import type { SelectItem } from './select.js';
 
@@ -31,8 +30,6 @@ export interface LivePromptOptions {
   status?: () => { left: string; right: string };
   /** Right-aligned meta line just above the input rules (hidden while the menu is open). */
   meta?: () => string;
-  /** Blink the caret while idle (only when animation is enabled). */
-  pulse?: boolean;
 }
 
 /** Visible width ignoring SGR; kept for existing callers/tests. */
@@ -55,13 +52,22 @@ function matchesFor(buffer: string, commands: SelectItem[]): SelectItem[] {
 
 /**
  * Visible slash-menu lines (exported for tests): Claude Code-style rows of
- * `label  description` with the hovered row highlighted. Long lists are
- * windowed to `maxVisible` rows around the hovered item.
+ * `label  description`. The hovered row is recolored (no inverse video) and
+ * its description wraps to a second row instead of truncating. Long lists
+ * are windowed to `maxVisible` rows around the hovered item.
  */
-export function suggestionLines(matches: SelectItem[], index: number, maxVisible = 10): string[] {
+export function suggestionLines(
+  matches: SelectItem[],
+  index: number,
+  maxVisible = 10,
+  width = 100,
+): string[] {
   if (!matches.length) return [dim('  (no matching commands)')];
   const clamped = Math.max(0, Math.min(index, matches.length - 1));
-  const width = Math.max(...matches.map((m) => m.label.length), 8);
+  const labelW = Math.max(...matches.map((m) => m.label.length), 8);
+  /** `  ❯ ` + label + two-space gap. */
+  const prefix = 4 + labelW + 2;
+  const descW = Math.max(10, width - prefix);
 
   let start = 0;
   if (matches.length > maxVisible) {
@@ -69,14 +75,24 @@ export function suggestionLines(matches: SelectItem[], index: number, maxVisible
   }
   const end = Math.min(matches.length, start + maxVisible);
 
-  const rows = matches.slice(start, end).map((item, i0) => {
-    const i = start + i0;
+  const rows: string[] = [];
+  for (let i = start; i < end; i++) {
+    const item = matches[i]!;
     const hovered = i === clamped;
-    const label = item.label.padEnd(width);
+    const label = item.label.padEnd(labelW);
     const desc = item.description ?? '';
-    if (hovered) return `  ${copper('❯')} ${inverse(copper(label))}  ${desc}`;
-    return `    ${label}  ${desc}`;
-  });
+    if (!hovered) {
+      rows.push(`    ${label}  ${desc}`);
+      continue;
+    }
+    const first = desc.slice(0, descW);
+    const rest = desc.slice(descW);
+    rows.push(`  ${copper('❯')} ${copperLight(label)}  ${copperLight(first)}`);
+    if (rest) {
+      const cont = rest.length > descW ? `${rest.slice(0, descW - 1)}…` : rest;
+      rows.push(' '.repeat(prefix) + copperLight(cont));
+    }
+  }
 
   return [
     ...(start > 0 ? [dim(`  ↑ ${start} more`)] : []),
@@ -252,8 +268,6 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
   const dock = opts.dock ?? new TerminalDock(output);
   let buffer = '';
   let index = 0;
-  /** Caret blink phase (0 = visible). */
-  let phase = 0;
   /** First Ctrl+C clears the input and arms; a second one exits. */
   let ctrlCArmed = false;
 
@@ -263,15 +277,22 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
     const w = boxWidth();
     const spans: Span[] = [{ text: opts.prompt, paint: copper }];
     if (buffer === '' && opts.placeholder) {
-      const ph = opts.placeholder;
-      spans.push({ text: ph.slice(0, 1) || ' ', paint: phase % 2 ? dim : inverse });
-      if (ph.length > 1) spans.push({ text: ph.slice(1), paint: dim });
+      spans.push({ text: opts.placeholder, paint: dim });
     } else {
       spans.push({ text: buffer, paint: bright });
-      spans.push({ text: ' ', paint: phase % 2 ? undefined : inverse });
     }
     // Claude Code-style: full-width rules above and below, no side borders.
     return [rule(w), ...wrapSpans(spans, w), rule(w)];
+  };
+
+  /** Real-cursor position: dock-relative row (1-based) and column of the caret. */
+  const caretPos = (headRows: number): { row: number; col: number } => {
+    const w = boxWidth();
+    const len = visibleWidth(opts.prompt) + visibleWidth(buffer);
+    const bodyRows = Math.max(1, Math.ceil(Math.max(1, len + 1) / w));
+    const rowIdx = Math.min(Math.floor(len / w), bodyRows - 1);
+    const col = Math.min(len - rowIdx * w + 1, w);
+    return { row: headRows + 1 + rowIdx + 1, col };
   };
 
   const renderDock = (): void => {
@@ -300,12 +321,15 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
     if (buffer.startsWith('/')) {
       const matches = matchesFor(buffer, opts.commands);
       if (index >= matches.length) index = Math.max(0, matches.length - 1);
-      head = suggestionLines(matches, index, maxItems);
+      head = suggestionLines(matches, index, maxItems, w);
     } else {
       head = opts.meta ? [statusBar('', `${opts.meta()} `, w)] : [];
     }
 
-    dock.set([...head, ...inputLines, ...(statusLine !== null ? [statusLine] : [])]);
+    dock.set(
+      [...head, ...inputLines, ...(statusLine !== null ? [statusLine] : [])],
+      caretPos(head.length),
+    );
   };
 
   const finish = (value: string | null): string | null => {
@@ -335,106 +359,92 @@ export async function promptWithSlashHints(opts: LivePromptOptions): Promise<str
     return value;
   };
 
-  let blink: ReturnType<typeof setInterval> | null = null;
-  if (opts.pulse && prefersAnimation()) {
-    blink = setInterval(() => {
-      phase = (phase + 1) % 2;
-      renderDock();
-    }, 650);
-    blink.unref?.();
-  }
-
   renderDock();
 
-  try {
-    for (;;) {
-      const raw = await opts.readKey();
-      if (raw === null) return finish(null);
-      const key = normalizeNavKey(raw);
+  for (;;) {
+    const raw = await opts.readKey();
+    if (raw === null) return finish(null);
+    const key = normalizeNavKey(raw);
 
-      if (key === '\x03') {
-        if (ctrlCArmed) return finish(null);
-        ctrlCArmed = true;
-        buffer = '';
-        index = 0;
-        renderDock();
-        continue;
-      }
-      if (ctrlCArmed) {
-        ctrlCArmed = false;
-        renderDock();
-      }
-      if (key === '\x04' && buffer === '') return finish(null);
-
-      if (key === '\r' || key === '\n') {
-        const matches = matchesFor(buffer, opts.commands);
-        if (buffer.startsWith('/') && matches.length > 0) {
-          return finish(matches[index]!.value);
-        }
-        return finish(buffer);
-      }
-
-      if (key === '\x1b') {
-        if (buffer.startsWith('/')) {
-          buffer = '';
-          index = 0;
-          renderDock();
-        }
-        continue;
-      }
-
-      // Arrows (and j/k while the dropdown is open) move the hover highlight.
-      const navUp =
-        key === 'up' || key === 'left' || (buffer.startsWith('/') && raw === 'k');
-      const navDown =
-        key === 'down' || key === 'right' || (buffer.startsWith('/') && raw === 'j');
-      if (navUp || navDown) {
-        const matches = matchesFor(buffer, opts.commands);
-        if (matches.length) {
-          index = navUp
-            ? (index - 1 + matches.length) % matches.length
-            : (index + 1) % matches.length;
-          renderDock();
-        }
-        continue;
-      }
-
-      if (key === '\t') {
-        const matches = matchesFor(buffer, opts.commands);
-        if (matches.length >= 1) {
-          buffer = matches[index]!.value;
-          renderDock();
-        }
-        continue;
-      }
-
-      if (key === '\x7f' || key === '\b') {
-        if (buffer.length) {
-          buffer = buffer.slice(0, -1);
-          index = 0;
-          renderDock();
-        }
-        continue;
-      }
-
-      if (key === '\x15') {
-        buffer = '';
-        index = 0;
-        renderDock();
-        continue;
-      }
-
-      // Printable input; coalesce paste so we paint once per burst instead of
-      // once per character.
-      if (key.length === 1 && key >= ' ') {
-        buffer += key;
-        if (opts.drainPrintable) buffer += opts.drainPrintable();
-        phase = 0; // keep the caret visible while typing
-        index = 0;
-        renderDock();
-      }
+    if (key === '\x03') {
+      if (ctrlCArmed) return finish(null);
+      ctrlCArmed = true;
+      buffer = '';
+      index = 0;
+      renderDock();
+      continue;
     }
-  } finally {
-    if (blink) clearInterval(blink);
+    if (ctrlCArmed) {
+      ctrlCArmed = false;
+      renderDock();
+    }
+    if (key === '\x04' && buffer === '') return finish(null);
+
+    if (key === '\r' || key === '\n') {
+      const matches = matchesFor(buffer, opts.commands);
+      if (buffer.startsWith('/') && matches.length > 0) {
+        return finish(matches[index]!.value);
+      }
+      return finish(buffer);
+    }
+
+    if (key === '\x1b') {
+      if (buffer.startsWith('/')) {
+        buffer = '';
+        index = 0;
+        renderDock();
+      }
+      continue;
+    }
+
+    // Arrows (and j/k while the dropdown is open) move the hover highlight.
+    const navUp =
+      key === 'up' || key === 'left' || (buffer.startsWith('/') && raw === 'k');
+    const navDown =
+      key === 'down' || key === 'right' || (buffer.startsWith('/') && raw === 'j');
+    if (navUp || navDown) {
+      const matches = matchesFor(buffer, opts.commands);
+      if (matches.length) {
+        index = navUp
+          ? (index - 1 + matches.length) % matches.length
+          : (index + 1) % matches.length;
+        renderDock();
+      }
+      continue;
+    }
+
+    if (key === '\t') {
+      const matches = matchesFor(buffer, opts.commands);
+      if (matches.length >= 1) {
+        buffer = matches[index]!.value;
+        renderDock();
+      }
+      continue;
+    }
+
+    if (key === '\x7f' || key === '\b') {
+      if (buffer.length) {
+        buffer = buffer.slice(0, -1);
+        index = 0;
+        renderDock();
+      }
+      continue;
+    }
+
+    if (key === '\x15') {
+      buffer = '';
+      index = 0;
+      renderDock();
+      continue;
+    }
+
+    // Printable input; coalesce paste so we paint once per burst instead of
+    // once per character.
+    if (key.length === 1 && key >= ' ') {
+      buffer += key;
+      if (opts.drainPrintable) buffer += opts.drainPrintable();
+      index = 0;
+      renderDock();
+    }
   }
 }

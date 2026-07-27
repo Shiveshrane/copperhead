@@ -160,7 +160,7 @@ describe('animation helpers', () => {
     else process.env.COPPERHEAD_NO_ANIM = prev;
     const frames = fiducialBootFrames();
     expect(frames.length).toBeGreaterThanOrEqual(3);
-    expect(frames[frames.length - 1]!.join('\n')).toContain('◯');
+    expect(frames[frames.length - 1]!.join('\n')).toContain('▟');
     setColorEnabled(false);
   });
 });
@@ -180,7 +180,7 @@ describe('repl chrome', () => {
     }).join('\n');
     expect(text).toContain('copperhead');
     expect(text).toContain('v0.7.0');
-    expect(text).toContain('────◯────'); // brand fiducial from docs.copperhead.sh
+    expect(text).toContain('███  ███'); // brand fiducial block mark (favicon.svg)
     expect(text).toContain('cursor');
     expect(text).toContain('kicad-cli');
     expect(helpText()).toContain('/check');
@@ -371,7 +371,7 @@ describe('runRepl', () => {
     const res = await done;
     expect(res.ok).toBe(true);
     expect(res.turns).toBe(0);
-    expect(lines.join('\n')).toContain('────◯────');
+    expect(lines.join('\n')).toContain('███  ███');
     expect(lines.join('\n')).toContain('/quit');
     expect(lines.join('\n')).toContain('What copperhead does');
     expect(lines.join('\n')).toContain('Example prompts');

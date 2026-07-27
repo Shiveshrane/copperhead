@@ -9,19 +9,20 @@ function in `src/agent/theme.ts`, so color changes are one-line edits.
 
 ```text
  1|                                                                        <- blank
- 2|      │      copperhead v0.7.0                                          <- mark[copper]  name[bold] version[dim]
- 3|  ────◯────  claude via flag · kicad-cli 9.0.4                          <- mark[copper]  meta[dim]
- 4|      │      ~/Github/chouhan-industries/copperhead                     <- mark[copper]  cwd[dim]
+ 2|   ▄▟▙▄     copperhead v0.7.0                                           <- mark[copper]  name[bold] version[dim]
+ 3| ███  ███   claude via flag · kicad-cli 9.0.4                           <- mark[copper]  meta[dim]
+ 4|   ▀▜▛▀     ~/Github/chouhan-industries/copperhead                      <- mark[copper]  cwd[dim]
  5|                                                                        <- blank
  6| ▎ New repository?                                                      <- bar[copper] title[copper]
- 7| ▎ `copperhead init` scaffolds docs/ from an existing schematic         <- bar[copper] body[default]
- 8| ▎ `copperhead demo` runs the USB-C breakout create pipeline            <- bar[copper] body[default]
- 9|                                                                        <- content region: echoes + agent
-..|  ❯ rename net KEY_DAH to KEY_DASH                                     <-   output scroll here, oldest
-..|  ▸ run_erc  clean — 0 violations                                      <-   scrolls off the top
+ 7| ▎  `copperhead init` scaffolds docs/ from an existing schematic        <- bar[copper] body[default]
+ 8| ▎  `copperhead demo` runs the USB-C breakout create pipeline           <- bar[copper] body[default]
+ 9| ▎ Docs: https://docs.copperhead.sh                                     <- bar[copper] body[default]
+10|                                                                        <- content region: echoes + agent
+..|  ❯ rename net KEY_DAH to KEY_DASH                                      <-   output scroll here, oldest
+..|  ▸ run_erc  clean — 0 violations                                       <-   scrolls off the top
 26|                                                     ● claude · main*   <- meta right-aligned: dot[copper] text[dim]
 27|──────────────────────────────────────────────────────────────────────  <- rule[dim], full width
-28|❯ Try "add reverse-polarity protection on VIN"                          <- prompt[copper] caret[inverse] placeholder[dim] typed[bright]
+28|❯ Try "add reverse-polarity protection on VIN"                          <- prompt[copper]+nbsp, caret = real cursor, placeholder[dim] typed[bright]
 29|──────────────────────────────────────────────────────────────────────  <- rule[dim], full width
 30|  / for commands · tab to complete · ctrl+c twice to quit         In copperhead   <- left[dim]  right[dim]
 ```
@@ -29,7 +30,7 @@ function in `src/agent/theme.ts`, so color changes are one-line edits.
 ## State 2: slash menu open (overlays upward, input row never moves)
 
 ```text
-16|  ❯ /demo         what copperhead does + how to try it                  <- hovered: ❯[copper] label[copper+inverse] desc[default]
+16|  ❯ /demo         what copperhead does + how to try it                  <- hovered: ❯[copper] label+desc[copperLight], desc wraps to a 2nd row
 17|    /examples     example change-request prompts                        <- label[default] desc[default]
 ..|    ...up to 10 items...
 26|  ↓ 10 more                                                             <- overflow marker[dim]
@@ -52,16 +53,17 @@ First Ctrl+C at the prompt: input clears, row 30 becomes `press ctrl+c again to 
 
 ## Color tokens (src/agent/theme.ts)
 
-| Token     | SGR         | Current value            | Used for                                  |
-| --------- | ----------- | ------------------------ | ----------------------------------------- |
-| `copper`  | `38;2;184;115;51` | #b87333 (brand: #b87333) | mark, prompt ❯, callout bar, meta dot     |
-| `bold`    | `1;38;2;184;115;51` | bold #b87333              | `copperhead` name in banner               |
-| `bright`  | `97`        | white                    | typed input text                          |
-| `dim`     | `90`        | gray                     | hints, placeholder, rules, version, paths |
-| `ok`      | `32`        | green                    | success lines (`check: all green`)        |
-| `warn`    | `33`        | amber                    | ctrl+c hint, cautions                     |
-| `err`     | `31`        | red                      | failures                                  |
-| `inverse` | `7`         | reverse video            | block caret, hovered menu label           |
+| Token         | SGR                | Current value             | Used for                               |
+| ------------- | ------------------ | ------------------------- | -------------------------------------- |
+| `copper`      | `38;2;184;115;51`  | #b87333 (brand: #b87333)  | mark, prompt ❯, callout bar, meta dot  |
+| `copperLight` | `38;2;238;201;165` | #eec9a5 (accent-high)     | hovered menu row                       |
+| `bold`        | `1`                | bold, default fg          | `copperhead` name (theme-adaptive)     |
+| `bright`      | `97`               | white                     | typed input text                       |
+| `dim`         | `38;2;153;153;153` | #999999 (SGR 90 fallback) | hints, placeholder, version, paths     |
+| `ruleDim`     | `38;2;136;136;136` | #888888 (SGR 90 fallback) | input-area rules                       |
+| `ok`          | `32`               | green                     | success lines (`check: all green`)     |
+| `warn`        | `33`               | amber                     | ctrl+c hint, cautions                  |
+| `err`         | `31`               | red                       | failures                               |
 
 Note: `copper` is the exact brand #b87333 on truecolor terminals
 (COLORTERM=truecolor/24bit); terminals without truecolor fall back to

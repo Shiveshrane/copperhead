@@ -23,17 +23,22 @@ function paint(code: string, s: string): string {
   return `${ESC}${code}m${s}${RESET}`;
 }
 
-/** Secondary metadata — dim gray. */
-export const dim = (s: string): string => paint('90', s);
+const TRUECOLOR = /truecolor|24bit/i.test(process.env.COLORTERM ?? '');
+
+/** Secondary metadata — soft gray #999999 (truecolor), SGR 90 fallback. */
+export const dim = (s: string): string => paint(TRUECOLOR ? '38;2;153;153;153' : '90', s);
+/** Rules/separators — one step darker than dim: #888888. */
+export const ruleDim = (s: string): string => paint(TRUECOLOR ? '38;2;136;136;136' : '90', s);
 /** Primary content — bright white (typed input, key values). */
 export const bright = (s: string): string => paint('97', s);
 
 /** Exact brand copper #b87333 where truecolor is available; warm 256 fallback. */
-const COPPER_SGR = /truecolor|24bit/i.test(process.env.COLORTERM ?? '')
-  ? '38;2;184;115;51'
-  : '38;5;173';
-/** Brand/title emphasis — bold copper. */
-export const bold = (s: string): string => paint(`1;${COPPER_SGR}`, s);
+const COPPER_SGR = TRUECOLOR ? '38;2;184;115;51' : '38;5;173';
+/** Light copper tint (brand accent-high #eec9a5) — menu hover. */
+export const copperLight = (s: string): string =>
+  paint(TRUECOLOR ? '38;2;238;201;165' : '38;5;223', s);
+/** Title emphasis — bold in the terminal's default foreground (theme-adaptive). */
+export const bold = (s: string): string => paint('1', s);
 /** Brand / active accent — exact copper #b87333 (truecolor), 256-color 173 fallback. */
 export const copper = (s: string): string => paint(COPPER_SGR, s);
 /** Success — PCB green. */
