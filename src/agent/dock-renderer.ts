@@ -134,29 +134,30 @@ export class DockRenderer implements ProgressRenderer {
       this.targetWord = target;
       if (target !== this.shownWord) this.morph = 0;
     }
-    let plain = this.shownWord;
+    let text = `${this.shownWord}...`;
     if (this.morph >= 0) {
-      // Single left-to-right sweep: each position flips old char -> `_` ->
-      // new char, so the words cross-fade character by character.
-      const oldW = this.shownWord;
-      const newW = this.targetWord;
-      const width = Math.max(oldW.length, newW.length);
+      // Single left-to-right sweep over the whole dotted string (dots
+      // included): each position flips old char -> `_` -> new char, so the
+      // words cross-fade character by character.
+      const oldS = `${this.shownWord}...`;
+      const newS = `${this.targetWord}...`;
+      const width = Math.max(oldS.length, newS.length);
       const k = this.morph;
       if (k >= width) {
-        this.shownWord = newW;
+        this.shownWord = this.targetWord;
         this.morph = -1;
-        plain = newW;
+        text = `${this.shownWord}...`;
       } else {
         let out = '';
         for (let i = 0; i < width; i++) {
-          out += i < k ? (newW[i] ?? ' ') : i === k ? '_' : (oldW[i] ?? ' ');
+          out += i < k ? (newS[i] ?? ' ') : i === k ? '_' : (oldS[i] ?? ' ');
         }
-        plain = out.trimEnd();
+        text = out.trimEnd();
       }
     }
     // Fixed-width slot (longest word + dots) so the stats after it never
     // shift; dots and morph slots share the word's copper.
-    const word = copper(`${plain}...`.padEnd(WORD_SLOT));
+    const word = copper(text.padEnd(WORD_SLOT));
     const parts = [
       dim(`turn ${this.turn}/${this.maxTurns}`),
       dim(`${fmtTokens(this.tokensIn)} in / ${fmtTokens(this.tokensOut)} out`),
