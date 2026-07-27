@@ -13,8 +13,10 @@ copperhead SHALL provide an `lmstudio` provider, selected by `--model lmstudio` 
 - **WHEN** an `lmstudio` turn runs while `OPENAI_API_KEY` is also set in the environment
 - **THEN** the request to the configured endpoint carries the fixed placeholder credential and not the value of `OPENAI_API_KEY`
 
-### Requirement: Configurable local endpoint
+### Requirement: Configurable endpoint
 The provider SHALL default to `http://localhost:1234/v1` and SHALL accept an override via the `LMSTUDIO_BASE_URL` environment variable. The endpoint SHALL be supplied by environment or configuration and SHALL NOT be committed to the repository. Any server speaking the OpenAI chat-completions protocol with tool calling SHALL be usable through this override.
+
+The endpoint SHALL NOT be restricted to loopback: remote and cloud-hosted addresses are permitted, because the override exists so a self-hosted server on another machine is reachable. copperhead therefore guarantees the destination and not the distance — requests go to the configured endpoint and to no other host, and the credential sent is always the placeholder — while whether that endpoint is local is the operator's decision. A blank or whitespace-only override SHALL be treated as unset and resolve to the default, never to the SDK's own vendor default.
 
 #### Scenario: Default endpoint
 - **WHEN** `--model lmstudio` is resolved with `LMSTUDIO_BASE_URL` unset
@@ -23,6 +25,14 @@ The provider SHALL default to `http://localhost:1234/v1` and SHALL accept an ove
 #### Scenario: Overridden endpoint
 - **WHEN** `LMSTUDIO_BASE_URL` names a different host or port (for example an Ollama or vLLM server)
 - **THEN** requests are sent there instead, and the default is not used
+
+#### Scenario: A remote endpoint is permitted but is not a local run
+- **WHEN** `LMSTUDIO_BASE_URL` names a host that is not on the local machine
+- **THEN** the run proceeds against that endpoint, still sending only the placeholder credential and never `OPENAI_API_KEY`, and the documentation states that design content leaves the machine in that configuration
+
+#### Scenario: A blank override does not fall through to a vendor default
+- **WHEN** `LMSTUDIO_BASE_URL` is set but empty or whitespace-only, as when `.env.example` is copied unedited
+- **THEN** the endpoint resolves to `http://localhost:1234/v1` and no request is made to the SDK's default cloud host
 
 ### Requirement: The loaded model is identified, not assumed
 When the model id is given explicitly as `lmstudio:<model-id>`, the provider SHALL send that id. When bare `lmstudio` is used, the provider SHALL ask the server which model is loaded, SHALL use the first model reported, and SHALL reuse that answer for the remainder of the run rather than asking again per turn. The resolved id SHALL be the model id used in run metadata and in the response-cache key, so two different local models do not share cached turns.
@@ -88,7 +98,7 @@ Adding a local provider SHALL NOT make `check` (alias `verify`) or `export bom` 
 
 #### Scenario: check makes no model call to any host
 - **WHEN** `copperhead check` runs in a repo configured with `model: "lmstudio"` and a local server running
-- **THEN** no request is made to the local server or to any cloud host, and the command completes exactly as it would with any other configured model
+- **THEN** no request is made to the configured endpoint or to any other host, and the command completes exactly as it would with any other configured model
 
 #### Scenario: export bom is equally offline
 - **WHEN** `copperhead export bom` runs in a repo configured with `model: "lmstudio"` and a local server running
