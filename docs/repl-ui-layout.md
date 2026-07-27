@@ -9,9 +9,9 @@ function in `src/agent/theme.ts`, so color changes are one-line edits.
 
 ```text
  1|                                                                        <- blank
- 2|  ▗▟██▙▖     copperhead v0.7.0                                          <- mark[copper]  name[bold] version[dim]
- 3| ██▌  ▐██    claude via flag · kicad-cli 9.0.4                          <- mark[copper]  meta[dim]
- 4|  ▝▜██▛▘     ~/Github/chouhan-industries/copperhead                     <- mark[copper]  cwd[dim]
+ 2|  ▗▟█▙▖     copperhead v0.7.0                                           <- mark[copper]  name[bold] version[dim]
+ 3| ██▌ ▐██    claude via flag · kicad-cli 9.0.4                           <- mark[copper]  meta[dim]
+ 4|  ▝▜█▛▘     ~/Github/chouhan-industries/copperhead                      <- mark[copper]  cwd[dim]
  5|                                                                        <- blank
  6| ▎ New repository?                                                      <- bar[copper] title[copper]
  7| ▎  `copperhead init` scaffolds docs/ from an existing schematic        <- bar[copper] body[default]
