@@ -33,7 +33,7 @@ export function fiducialBootFrames(): string[][] {
 /**
  * Pulse the fiducial mark in place over the already-rendered banner (rows
  * `topRow..topRow+2`, column 1). The full screen loads first; this animates
- * after, three grow cycles ending on the final mark. Frames are constant
+ * after, two grow cycles ending on the final mark. Frames are constant
  * width so they overwrite each other without clearing the banner text
  * beside them. Deliberately avoids DECSC/DECRC: the dock owns that slot for
  * its caret-parking protocol; the caller repaints the dock afterwards to
@@ -48,7 +48,7 @@ export async function animateMarkAt(
   const frames = fiducialBootFrames();
   const frameMs = opts?.slow ? 150 : 60;
   const holdMs = opts?.slow ? 300 : 120;
-  for (let cycle = 0; cycle < 3; cycle++) {
+  for (let cycle = 0; cycle < 2; cycle++) {
     for (const frame of frames) {
       let seq = HIDE;
       frame.forEach((row, i) => {
