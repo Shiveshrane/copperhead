@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TerminalDock } from '../src/util/dock.js';
 import {
   callout,
@@ -186,6 +186,30 @@ describe('DockRenderer (pinned observability)', () => {
     expect(out.written).toContain('model call');
     r.finish('done · verified erc');
     expect(lines[lines.length - 1]).toContain('done');
+  });
+
+  it('morphs the working word letter by letter through underscore slots', () => {
+    setColorEnabled(false);
+    vi.useFakeTimers();
+    try {
+      const out = fakeOut(80);
+      const dock = new TerminalDock(out);
+      const r = new DockRenderer(dock, () => {}, () => ({ meta: null, hints: null }));
+      r.turnStart(1, 40, 0, 0);
+      // Cross the ~6s word-rotation boundary; the transition erases the old
+      // word into `_` slots before typing the next one.
+      vi.advanceTimersByTime(6500);
+      expect(out.written).toContain('_');
+      // Settle mid-cycle (before the next rotation boundary at 12s).
+      vi.advanceTimersByTime(4000);
+      const tail = out.written.slice(-400);
+      expect(tail).toMatch(
+        /Routing|Etching|Reflowing|Soldering|Drilling|Plating|Probing|Fluxing|Tinning|Laminating|Silkscreening|Panelizing/,
+      );
+      r.finish('done');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

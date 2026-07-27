@@ -8,7 +8,7 @@
  */
 
 import { rule, statusBar } from './box.js';
-import { copper, copperLight, dim, styleOutcome, toolLine, warn } from './theme.js';
+import { copper, dim, styleOutcome, toolLine, warn } from './theme.js';
 import { fmtDuration, fmtTokens, turnMarker, type ProgressRenderer } from './render.js';
 import type { TerminalDock } from '../util/dock.js';
 
@@ -29,6 +29,9 @@ const WORKING = [
   'Silkscreening',
   'Panelizing',
 ];
+
+/** Fixed word-slot width: longest word plus the static dots. */
+const WORD_SLOT = Math.max(...WORKING.map((w) => w.length)) + 3;
 
 export class DockRenderer implements ProgressRenderer {
   private turn = 0;
@@ -93,10 +96,17 @@ export class DockRenderer implements ProgressRenderer {
     // The next prompt's renderDock() takes the dock back over.
   }
 
+  /** Currently displayed working word; morphs letter by letter on change. */
+  private shownWord = '';
+  private targetWord = '';
+  /** -1 = settled; otherwise progress through erase-then-type transition. */
+  private morph = -1;
+
   private arm(): void {
     if (this.timer) return;
     this.timer = setInterval(() => {
       this.frame++;
+      if (this.morph >= 0) this.morph++;
       this.paint();
     }, 120);
     this.timer.unref?.();
@@ -113,18 +123,40 @@ export class DockRenderer implements ProgressRenderer {
     const spinner = copper(FRAMES[this.frame % FRAMES.length]!);
     // Claude Code-style working word, board-shop themed: rotates every ~6s
     // while a turn runs, with a shimmering highlight sweeping the letters.
+    // A word change morphs letter by letter: the old word is erased into
+    // `_` slots left to right, then the new word types over them.
     const wordIdx =
       (this.runSeed + this.turn + Math.floor((Date.now() - this.turnStartMs) / 6000)) %
       WORKING.length;
-    const plain = WORKING[wordIdx]!;
-    const sweep = this.frame % (plain.length + 4);
-    const word = plain
+    const target = WORKING[wordIdx]!;
+    if (this.shownWord === '') this.shownWord = target;
+    if (target !== this.targetWord) {
+      this.targetWord = target;
+      if (target !== this.shownWord) this.morph = 0;
+    }
+    let plain = this.shownWord;
+    if (this.morph >= 0) {
+      const oldW = this.shownWord;
+      const newW = this.targetWord;
+      if (this.morph < oldW.length) {
+        plain = '_'.repeat(this.morph + 1) + oldW.slice(this.morph + 1);
+      } else if (this.morph < oldW.length + newW.length) {
+        const typed = this.morph - oldW.length + 1;
+        plain = newW.slice(0, typed) + '_'.repeat(Math.max(0, newW.length - typed));
+      } else {
+        this.shownWord = newW;
+        this.morph = -1;
+        plain = newW;
+      }
+    }
+    // Fixed-width slot (longest word + dots) so the stats after it never
+    // shift; dots are static and share the word's copper. Underscore slots
+    // from the morph render dim.
+    const padded = `${plain}...`.padEnd(WORD_SLOT);
+    const word = padded
       .split('')
-      .map((ch, i) => (Math.abs(i - sweep) <= 1 ? copperLight(ch) : copper(ch)))
+      .map((ch) => (ch === '_' ? dim(ch) : copper(ch)))
       .join('');
-    // Fixed-width dots: the cycle animates without shifting the rest of the
-    // line left and right on every frame.
-    const dots = '.'.repeat(1 + (this.frame % 3)).padEnd(3);
     const parts = [
       dim(`turn ${this.turn}/${this.maxTurns}`),
       dim(`${fmtTokens(this.tokensIn)} in / ${fmtTokens(this.tokensOut)} out`),
@@ -139,7 +171,7 @@ export class DockRenderer implements ProgressRenderer {
     this.dock.set([
       ...(meta ? [statusBar('', `${meta} `, w)] : []),
       rule(w),
-      `${spinner} ${word}${dots} ${dim('· ')}${parts.join(dim(' · '))}`,
+      `${spinner} ${word} ${dim('· ')}${parts.join(dim(' · '))}`,
       rule(w),
       ...(hints ? [statusBar(`  ${hints}`, '', w)] : []),
     ]);
