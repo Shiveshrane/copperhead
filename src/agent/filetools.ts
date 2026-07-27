@@ -51,6 +51,22 @@ export async function toolEditFile(
   const text = await readFile(abs, 'utf8');
   const first = text.indexOf(oldString);
   if (first === -1) {
+    // A retry of an edit that already landed is indistinguishable from a genuinely
+    // bad anchor under the plain message, and "re-read and use an exact excerpt"
+    // is exactly the wrong steer for it: the model re-reads, derives the same
+    // anchor, and fails again. Observed live on a local model, which completed a
+    // net rename and then burned its whole turn budget re-attempting it while the
+    // work sat finished on disk. Naming the likely cause turns that loop into one
+    // decision. Hedged and paired with the original guidance, so a coincidental
+    // match (new_string occurring for unrelated reasons) still points somewhere useful.
+    const applied = newString ? text.split(newString).length - 1 : 0;
+    if (applied > 0) {
+      throw new Error(
+        `edit_file: anchor not found in ${p}, but new_string is already present ${applied} time(s), ` +
+          'so this edit may have been applied already. Verify with read_file or search before retrying: ' +
+          'if the change is in place, move on to the next step; if not, re-read the file and use an exact excerpt',
+      );
+    }
     throw new Error(`edit_file: anchor not found in ${p}; re-read the file and use an exact excerpt`);
   }
   const count = text.split(oldString).length - 1;

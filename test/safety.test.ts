@@ -116,6 +116,28 @@ describe('file tools', () => {
     expect(await readFile(path.join(dir, 'f.txt'), 'utf8')).toBe('aaa\nccc\naaa\n');
   });
 
+  it('edit_file names an already-applied edit instead of sending the model back to re-read', async () => {
+    // Observed live: a model finished a net rename, then spent its entire turn
+    // budget retrying it, because a completed edit and a wrong anchor produced the
+    // same "re-read the file and use an exact excerpt" message.
+    const dir = await mkdtemp(path.join(tmpdir(), 'ch-'));
+    await writeFile(path.join(dir, 'f.txt'), '(global_label "KEY_DASH")\n');
+    const retry = toolEditFile(dir, 'f.txt', '(global_label "KEY_DAH")', '(global_label "KEY_DASH")');
+    await expect(retry).rejects.toThrow(/already been applied|already present/);
+    await expect(retry).rejects.toThrow(/move on to the next step/);
+
+    // A genuinely wrong anchor keeps the original guidance, with no false claim
+    // that the work is done.
+    const wrong = toolEditFile(dir, 'f.txt', 'nothing like this', 'x');
+    await expect(wrong).rejects.toThrow(/re-read the file and use an exact excerpt/);
+    await expect(wrong).rejects.not.toThrow(/already present/);
+
+    // Deleting text (empty new_string) must not report itself as already applied.
+    await expect(toolEditFile(dir, 'f.txt', 'absent', '')).rejects.toThrow(
+      /anchor not found in f\.txt; re-read/,
+    );
+  });
+
   it('search finds regex matches with glob filtering', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'ch-'));
     await writeFile(path.join(dir, 'a.md'), 'KEY_DAH here');
