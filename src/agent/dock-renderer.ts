@@ -136,27 +136,27 @@ export class DockRenderer implements ProgressRenderer {
     }
     let plain = this.shownWord;
     if (this.morph >= 0) {
+      // Single left-to-right sweep: each position flips old char -> `_` ->
+      // new char, so the words cross-fade character by character.
       const oldW = this.shownWord;
       const newW = this.targetWord;
-      if (this.morph < oldW.length) {
-        plain = '_'.repeat(this.morph + 1) + oldW.slice(this.morph + 1);
-      } else if (this.morph < oldW.length + newW.length) {
-        const typed = this.morph - oldW.length + 1;
-        plain = newW.slice(0, typed) + '_'.repeat(Math.max(0, newW.length - typed));
-      } else {
+      const width = Math.max(oldW.length, newW.length);
+      const k = this.morph;
+      if (k >= width) {
         this.shownWord = newW;
         this.morph = -1;
         plain = newW;
+      } else {
+        let out = '';
+        for (let i = 0; i < width; i++) {
+          out += i < k ? (newW[i] ?? ' ') : i === k ? '_' : (oldW[i] ?? ' ');
+        }
+        plain = out.trimEnd();
       }
     }
     // Fixed-width slot (longest word + dots) so the stats after it never
-    // shift; dots are static and share the word's copper. Underscore slots
-    // from the morph render dim.
-    const padded = `${plain}...`.padEnd(WORD_SLOT);
-    const word = padded
-      .split('')
-      .map((ch) => (ch === '_' ? dim(ch) : copper(ch)))
-      .join('');
+    // shift; dots and morph slots share the word's copper.
+    const word = copper(`${plain}...`.padEnd(WORD_SLOT));
     const parts = [
       dim(`turn ${this.turn}/${this.maxTurns}`),
       dim(`${fmtTokens(this.tokensIn)} in / ${fmtTokens(this.tokensOut)} out`),
