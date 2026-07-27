@@ -173,13 +173,31 @@ const TRAINING_RISK_HOSTS: Record<string, string> = {
   'openrouter.ai': 'OpenRouter `:free` models may route to providers that train on prompts',
 };
 
+/**
+ * True loopback only — unlike `isLocalEndpoint` (config.ts), this excludes
+ * `.local`/mDNS hostnames. `isLocalEndpoint`'s broader definition is correct
+ * for "does this need a credential" (many LAN-hosted servers skip auth), but
+ * wrong for the privacy bypass below: a request to `nas.local` genuinely
+ * leaves the machine onto the LAN to a different physical device, so "nothing
+ * leaves the machine" does not hold the way it does for real loopback.
+ */
+function isLoopbackHost(baseURL: string): boolean {
+  try {
+    const h = new URL(baseURL).hostname.toLowerCase();
+    return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
 /** A `warn` line when the configured endpoint's host is a documented training risk. */
 export function checkPromptPrivacy(model: string, compat?: CompatSettings | undefined): DoctorCheck | null {
   if (model !== 'compat' && !model.startsWith('compat:')) return null;
   if (!compat?.baseURL) return null;
-  // A local endpoint has no third party to have a policy about: nothing
-  // leaves the machine, so "check the provider's terms" would be nonsensical.
-  if (isLocalEndpoint(compat.baseURL)) return null;
+  // A true loopback endpoint has no third party to have a policy about:
+  // nothing leaves the machine, so "check the provider's terms" would be
+  // nonsensical. A LAN host (including .local) does not get this bypass.
+  if (isLoopbackHost(compat.baseURL)) return null;
   let host: string;
   try {
     host = new URL(compat.baseURL).hostname.toLowerCase();

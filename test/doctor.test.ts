@@ -355,10 +355,21 @@ describe('doctor — OpenAI-compatible endpoints (issue #110)', () => {
     expect(checkPromptPrivacy('claude', groq)).toBeNull();
   });
 
-  it('bypasses entirely for a local endpoint: no third party to have a policy about', () => {
-    for (const baseURL of ['http://localhost:11434/v1', 'http://127.0.0.1:11434/v1', 'http://ollama.local/v1']) {
+  it('bypasses entirely for true loopback: no third party to have a policy about', () => {
+    for (const baseURL of ['http://localhost:11434/v1', 'http://127.0.0.1:11434/v1', 'http://[::1]:11434/v1']) {
       expect(checkPromptPrivacy('compat:phi3', { baseURL, apiKeyEnv: 'UNUSED' }), baseURL).toBeNull();
     }
+  });
+
+  it('does NOT bypass a .local (mDNS/LAN) host — that traffic leaves the machine (regression)', () => {
+    // Bug: reusing isLocalEndpoint (which treats *.local as local, correct for
+    // "does this need a credential") also skipped the privacy check for LAN
+    // hosts. A request to nas.local goes out over the network to a different
+    // physical device, so "nothing leaves the machine" does not hold here.
+    const c = checkPromptPrivacy('compat:phi3', { baseURL: 'http://nas.local:11434/v1', apiKeyEnv: 'UNUSED' });
+    expect(c).not.toBeNull();
+    expect(c?.status).toBe('info');
+    expect(c?.detail).toContain('nas.local');
   });
 
   it('a training-risk warning still leaves the report ready (exit 0)', async () => {
