@@ -122,7 +122,9 @@ export class DockRenderer implements ProgressRenderer {
       .split('')
       .map((ch, i) => (Math.abs(i - sweep) <= 1 ? copperLight(ch) : copper(ch)))
       .join('');
-    const dots = '.'.repeat(1 + (this.frame % 3));
+    // Fixed-width dots: the cycle animates without shifting the rest of the
+    // line left and right on every frame.
+    const dots = '.'.repeat(1 + (this.frame % 3)).padEnd(3);
     const parts = [
       dim(`turn ${this.turn}/${this.maxTurns}`),
       dim(`${fmtTokens(this.tokensIn)} in / ${fmtTokens(this.tokensOut)} out`),
