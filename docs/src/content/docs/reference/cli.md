@@ -35,7 +35,7 @@ Global options go before the subcommand: `copperhead --json check`.
 
 ## `copperhead` / `copperhead repl`
 
-Interactive agent shell (default when no command is given). On a TTY, prints a short banner and prompts for change requests — each line runs the same gated loop as `copperhead do`, then returns to the prompt.
+Interactive agent shell (default when no command is given). On a TTY it takes over the full window (alternate screen, restored on exit): banner on top, input pinned at the bottom, each line runs the same gated loop as `copperhead do`, then returns to the prompt. Ctrl+C twice exits; PgUp/PgDn scroll the session history; every session mirrors its log to `.copperhead/runs/repl-<timestamp>.log` (ANSI stripped, `sk-` keys redacted).
 
 ```bash
 copperhead
@@ -49,7 +49,7 @@ copperhead repl --model claude-code
 | `--max-turns <n>` | Turn budget per request. |
 | `--interactive` | Pause for approval after each proposal validates. |
 
-Slash commands inside the shell: `/help`, `/demo`, `/examples`, `/status`, `/check`, `/parts`, `/nets`, `/bom`, `/sync`, `/drift`, `/constraints`, `/openspec`, `/config`, `/git`, `/runs`, `/last`, `/model`, `/version`, `/clear`, `/quit` (`/exit`, `/q`). Type `/` to see live filtered suggestions immediately; ↑/↓ + Enter picks one, Tab completes. Requires a TTY (or a seed request for a one-shot non-TTY run). `--json` is refused; use `copperhead do … --json` instead.
+Slash commands inside the shell: `/help`, `/demo`, `/examples`, `/status`, `/check`, `/parts`, `/nets`, `/bom`, `/sync`, `/drift`, `/constraints`, `/openspec`, `/config`, `/git`, `/runs`, `/last`, `/model`, `/version`, `/clear`, `/quit` (`/exit`, `/q`). Type `/` to see live filtered suggestions immediately; ↑/↓ + Enter picks one, Tab completes. `/model` opens an arrow-key picker and switches the session model in place. Requires a TTY (or a seed request for a one-shot non-TTY run). `--json` is refused; use `copperhead do … --json` instead.
 
 ## `copperhead demo`
 

@@ -166,6 +166,7 @@ export function helpText(): string {
     '',
     dim('  Tip: type `/` to filter commands — ↑/↓ + Enter to pick, Tab to complete.'),
     dim('  Tip: run `copperhead demo` outside the shell for the full USB-C create pipeline.'),
+    dim('  Tip: PgUp/PgDn scroll session history; the log mirrors to .copperhead/runs/repl-<ts>.log.'),
     '',
   ].join('\n');
 }

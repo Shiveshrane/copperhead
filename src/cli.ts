@@ -79,7 +79,7 @@ program
   .command('repl', { isDefault: true })
   .description('interactive agent shell (default when no command is given)')
   .argument('[request...]', 'optional first change request before the prompt loop')
-  .option('--model <model>', 'codex | gpt-5 | claude | claude-code (or a provider-specific model id)')
+  .option('--model <model>', 'codex | cursor | gpt-5 | claude | claude-code (or a provider-specific model id)')
   .option('--max-turns <n>', 'turn budget per request')
   .option('--interactive', 'pause for approval after each proposal validates')
   .action(

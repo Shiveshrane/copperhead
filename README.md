@@ -52,7 +52,7 @@ The script is conservative by design: it never runs `sudo` and never edits shell
 In an existing KiCad repository:
 
 ```bash
-export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
+export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY; optional: with no key, `copperhead` offers a model picker
 copperhead init                # scaffold docs/ from the schematic; idempotent
 copperhead                     # interactive agent shell (Claude Code–style REPL)
 copperhead demo --tour          # what the agent does (no LLM)

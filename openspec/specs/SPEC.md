@@ -243,7 +243,10 @@ copperhead [repl] ["<change request>"] [--model …]
     /bom, /sync, /drift, /constraints, /openspec, /config, /git, /runs, /last,
     /model, /version, /clear, /quit. Inspect commands are verify-only (no LLM
     resolve / create). An optional first request runs before the loop. Non-TTY
-    without a request refuses and points at `copperhead do`.
+    without a request refuses and points at `copperhead do`. With no model
+    configured anywhere, a TTY session offers an interactive picker (also
+    reachable later via /model). Session output mirrors to
+    `.copperhead/runs/repl-<ts>.log` with AC-4.1 redaction applied.
 
 copperhead demo [--tour] [--model …] [--dir <path>]
     Print a short tour of what the agent does (`--tour`), or scaffold
