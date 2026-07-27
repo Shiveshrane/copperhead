@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import path from 'node:path';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline/promises';
 import { loadConfig, resolveModel, type ModelSource } from './config.js';
@@ -24,6 +23,7 @@ import { runAgentLoop, type BudgetExhaustedStats } from './agent/loop.js';
 import { makeRenderer } from './agent/render.js';
 import { kicadCliVersion } from './kicad/cli.js';
 import { loadEnvFile } from './util/env.js';
+import { budgetExtraTurns, budgetPromptText, parseMaxTurns, repoOf } from './util/cli-args.js';
 
 // Read .env from the working directory before any command resolves a model or a
 // provider. Loaded here rather than per-command so `check` behaves identically,
@@ -39,17 +39,6 @@ const { version } = createRequire(import.meta.url)('../package.json') as { versi
 
 const program = new Command();
 
-const repoOf = (opts: { repo?: string }): string => path.resolve(opts.repo ?? process.cwd());
-
-/** `--max-turns` accepts only a positive integer; "5oops" and "NaN" refuse to start. */
-function parseMaxTurns(raw: string): number {
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n <= 0) {
-    throw new Error(`--max-turns must be a positive integer, got "${raw}"`);
-  }
-  return n;
-}
-
 async function confirmTty(question: string): Promise<boolean> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const answer = await rl.question(`${question} [y/N] `);
@@ -63,14 +52,8 @@ async function confirmTty(question: string): Promise<boolean> {
  */
 function budgetContinuePrompt(): ((stats: BudgetExhaustedStats) => Promise<number>) | undefined {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return undefined;
-  return async (stats) => {
-    // ceil of the ORIGINAL budget (design D1), so repeat extensions offer the
-    // same increment instead of escalating with the extended turn count.
-    const extra = Math.ceil(stats.maxTurns / 2);
-    const k = (n: number) => `${(n / 1000).toFixed(1)}k`;
-    const q = `Turn budget exhausted (${stats.turnsUsed} turns, ${k(stats.tokensIn)} in / ${k(stats.tokensOut)} out, ${stats.filesTouched.length} file(s) touched, ${stats.openObligations} open obligation(s)). Continue with ${extra} more turns?`;
-    return (await confirmTty(q)) ? extra : 0;
-  };
+  return async (stats) =>
+    (await confirmTty(budgetPromptText(stats))) ? budgetExtraTurns(stats) : 0;
 }
 
 program
@@ -90,11 +73,12 @@ program
   .argument('[request...]', 'optional first change request before the prompt loop')
   .option('--model <model>', 'codex | cursor | gpt-5 | claude | claude-code (or a provider-specific model id)')
   .option('--max-turns <n>', 'turn budget per request')
+  .option('--allow-dirty', 'let turns run on a dirty working tree')
   .option('--interactive', 'pause for approval after each proposal validates')
   .action(
     async (
       requestParts: string[],
-      opts: { model?: string; maxTurns?: string; interactive?: boolean },
+      opts: { model?: string; maxTurns?: string; allowDirty?: boolean; interactive?: boolean },
     ) => {
       const repo = repoOf(program.opts());
       if (program.opts().json) {
@@ -130,6 +114,7 @@ program
           version,
           kicadCliVersion: kicadVer,
           ...(opts.maxTurns ? { maxTurns: parseMaxTurns(opts.maxTurns) } : {}),
+          allowDirty: opts.allowDirty ?? false,
           interactive: opts.interactive ?? false,
           ...(seed ? { seed } : {}),
           confirm: confirmTty,
@@ -300,8 +285,15 @@ program
   .option('--tour', 'print the overview only; do not run the pipeline')
   .action(async (opts: { model?: string; interactive?: boolean; dir?: string; tour?: boolean }) => {
     if (opts.tour) {
-      // Color on for attended TTY tours even without a renderer.
       const { setColorEnabled } = await import('./agent/theme.js');
+      if (program.opts().json) {
+        // --json is a contract, not a suggestion: a script that passes it
+        // unconditionally must never get prose back. Plain lines, no SGR.
+        setColorEnabled(false);
+        console.log(JSON.stringify({ tour: demoTourText().split('\n') }, null, 2));
+        process.exit(0);
+      }
+      // Color on for attended TTY tours even without a renderer.
       setColorEnabled(Boolean(process.stdout.isTTY) && !program.opts().plain && !process.env.NO_COLOR);
       console.log(demoTourText());
       process.exit(0);

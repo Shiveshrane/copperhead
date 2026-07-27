@@ -42,11 +42,86 @@ export async function ensureIgnored(repo: string, entries: string[]): Promise<vo
 export interface GitSnapshot {
   head: string;
   stash: string | null;
+  /**
+   * Tree object holding the untracked-but-not-ignored files that `git stash
+   * create` cannot capture. Without it a rollback's `git clean -fd` deletes
+   * them for good; see snapshotUntracked().
+   */
+  untracked: string | null;
 }
 
 async function git(repo: string, args: string[]): Promise<string> {
   const { stdout } = await execa('git', args, { cwd: repo });
   return stdout.trim();
+}
+
+/** Same as git(), with a scratch index so the repo's real index is untouched. */
+async function gitWithIndex(repo: string, indexFile: string, args: string[]): Promise<string> {
+  const { stdout } = await execa('git', args, {
+    cwd: repo,
+    env: { GIT_INDEX_FILE: indexFile },
+  });
+  return stdout.trim();
+}
+
+/** Monotonic suffix so two scratch indexes in one process never collide. */
+let scratchIndexSeq = 0;
+
+/**
+ * Path for a throwaway index, inside the repo's own git dir rather than
+ * TMPDIR: git guarantees that directory exists and is writable, so a hostile
+ * or missing temp dir cannot make a snapshot fail and block a run from
+ * starting. Absolute, because git resolves GIT_INDEX_FILE against cwd.
+ */
+async function scratchIndexPath(repo: string): Promise<string> {
+  const gitDir = await git(repo, ['rev-parse', '--absolute-git-dir']);
+  return path.join(gitDir, `copperhead-index-${process.pid}-${scratchIndexSeq++}`);
+}
+
+/**
+ * Write the untracked-but-not-ignored files to a tree object and return its
+ * sha, or null when there are none.
+ *
+ * `git stash create` only ever captures tracked changes, so on its own it
+ * leaves every new file a run (or the user) has not added yet outside the
+ * snapshot — and restore()'s `git clean -fd` then deletes exactly those. The
+ * two sets line up: `--exclude-standard` skips ignored paths and plain
+ * `clean -fd` (no -x) leaves them alone, so what is captured here is precisely
+ * what the rollback would otherwise destroy.
+ *
+ * Built through a scratch GIT_INDEX_FILE rather than `git add -A`, because
+ * this runs at the *start* of a run: staging the user's files would outlive a
+ * successful run and silently rewrite their staged/unstaged split.
+ */
+async function snapshotUntracked(repo: string): Promise<string | null> {
+  const listed = await git(repo, ['ls-files', '--others', '--exclude-standard', '-z']);
+  const paths = listed.split('\0').filter(Boolean);
+  if (!paths.length) return null;
+  const indexFile = await scratchIndexPath(repo);
+  try {
+    await execa('git', ['update-index', '-z', '--add', '--stdin'], {
+      cwd: repo,
+      env: { GIT_INDEX_FILE: indexFile },
+      input: paths.join('\0') + '\0',
+    });
+    return (await gitWithIndex(repo, indexFile, ['write-tree'])) || null;
+  } finally {
+    await rm(indexFile, { force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Re-materialize the untracked files captured by snapshotUntracked(). Runs
+ * after `stash apply` so tracked restores win any path collision.
+ */
+async function restoreUntracked(repo: string, tree: string): Promise<void> {
+  const indexFile = await scratchIndexPath(repo);
+  try {
+    await gitWithIndex(repo, indexFile, ['read-tree', tree]);
+    await gitWithIndex(repo, indexFile, ['checkout-index', '-a', '-f']);
+  } finally {
+    await rm(indexFile, { force: true }).catch(() => {});
+  }
 }
 
 export async function isGitRepo(repo: string): Promise<boolean> {
@@ -108,16 +183,19 @@ export async function gitPreflight(repo: string, opts: { allowDirty?: boolean } 
 
 /**
  * Snapshot the working tree before a run. On a clean tree HEAD is enough;
- * with --allow-dirty we keep a `git stash create` object so uncommitted work
- * survives a rollback (SPEC §7).
+ * with --allow-dirty we keep a `git stash create` object for tracked changes
+ * plus a tree of the untracked files it cannot see, so uncommitted work
+ * survives a rollback intact (SPEC §7).
  */
 export async function snapshot(repo: string): Promise<GitSnapshot> {
   const head = await git(repo, ['rev-parse', 'HEAD']);
   let stash: string | null = null;
+  let untracked: string | null = null;
   if (await isDirty(repo)) {
     stash = (await git(repo, ['stash', 'create'])) || null;
+    untracked = await snapshotUntracked(repo);
   }
-  return { head, stash };
+  return { head, stash, untracked };
 }
 
 /**
@@ -147,6 +225,18 @@ export async function restore(repo: string, snap: GitSnapshot): Promise<void> {
       await git(repo, ['clean', '-fd', '-e', '.copperhead/runs']);
       if (snap.stash) {
         await git(repo, ['stash', 'apply', snap.stash]);
+      }
+      // The clean above deleted every untracked file; put back the ones that
+      // were there before the run. Never fatal: a rollback that restored the
+      // tracked state is still better than one that threw halfway.
+      if (snap.untracked) {
+        try {
+          await restoreUntracked(repo, snap.untracked);
+        } catch (err) {
+          console.warn(
+            `warning: could not restore untracked files after rollback: ${(err as Error).message}`,
+          );
+        }
       }
     } finally {
       if (backup && existsSync(backup)) {

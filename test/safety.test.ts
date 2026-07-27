@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { resolveInRepo, SandboxError, isKicadFile } from '../src/util/paths.js';
@@ -173,6 +174,62 @@ describe('git guard (AC-3.8, AC-3.6)', () => {
     const { repo, cleanup } = await tempFixtureRepo();
     try {
       expect(await hasCommits(repo)).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('a rollback gives back untracked work instead of deleting it', async () => {
+    // Regression: `git stash create` only ever captures tracked changes, so
+    // restore()'s `git clean -fd` used to wipe every file the user had not
+    // added yet, with nothing to recover them from. The dirty-tree preflight
+    // promises the opposite ("copperhead preserve them via git stash create").
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      const sch = path.join(repo, 'hardware', 'open-key.kicad_sch');
+      const tracked = await readFile(sch, 'utf8');
+      await writeFile(sch, tracked.replace('KEY_DAH', 'KEY_EDITED'), 'utf8');
+      await writeFile(path.join(repo, 'hand-written-notes.md'), 'do not lose me\n', 'utf8');
+      await mkdir(path.join(repo, 'docs'), { recursive: true });
+      await writeFile(path.join(repo, 'docs', 'new-doc.md'), 'nested and untracked\n', 'utf8');
+
+      // The snapshot is taken with the tree already dirty, exactly as a run
+      // started with --allow-dirty does.
+      const snap = await snapshot(repo);
+      await writeFile(sch, tracked.replace('KEY_DAH', 'KEY_RUINED_BY_THE_AGENT'), 'utf8');
+      await writeFile(path.join(repo, 'agent-scratch.txt'), 'created by the failed run\n', 'utf8');
+
+      await restore(repo, snap);
+
+      // The user's uncommitted edit and both untracked files come back...
+      expect(await readFile(sch, 'utf8')).toBe(tracked.replace('KEY_DAH', 'KEY_EDITED'));
+      expect(await readFile(path.join(repo, 'hand-written-notes.md'), 'utf8')).toBe('do not lose me\n');
+      expect(await readFile(path.join(repo, 'docs', 'new-doc.md'), 'utf8')).toBe('nested and untracked\n');
+      // ...and the failed run's own scratch file does not.
+      expect(existsSync(path.join(repo, 'agent-scratch.txt'))).toBe(false);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('does not resurrect gitignored files, which the rollback never deletes', async () => {
+    // Symmetry check: `ls-files --exclude-standard` skips ignored paths and
+    // plain `clean -fd` (no -x) leaves them alone, so neither side touches
+    // them and .env cannot be swept into a snapshot object.
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      await writeFile(path.join(repo, '.env'), 'OPENAI_API_KEY=sk-should-never-be-captured\n', 'utf8');
+      await writeFile(path.join(repo, 'tracked-change.txt'), 'x', 'utf8');
+      const snap = await snapshot(repo);
+      expect(snap.untracked).not.toBeNull();
+
+      await restore(repo, snap);
+
+      // Untouched on disk, and absent from the captured tree.
+      expect(await readFile(path.join(repo, '.env'), 'utf8')).toContain('sk-should-never-be-captured');
+      const tree = await execa('git', ['ls-tree', '-r', '--name-only', snap.untracked!], { cwd: repo });
+      expect(tree.stdout.split('\n')).toContain('tracked-change.txt');
+      expect(tree.stdout).not.toContain('.env');
     } finally {
       await cleanup();
     }

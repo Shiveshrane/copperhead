@@ -22,6 +22,27 @@ export class KicadCliMissingError extends PreflightError {
   }
 }
 
+/**
+ * `COPPERHEAD_KICAD_CLI` points somewhere that does not exist. Distinct from
+ * KicadCliMissingError because the advice is the opposite: the override was
+ * seen and rejected, so telling the user to set it would be nonsense.
+ */
+export class KicadCliBadOverrideError extends PreflightError {
+  constructor(configured: string) {
+    super(
+      `COPPERHEAD_KICAD_CLI points to a path that does not exist: ${configured}`,
+      'the override wins over PATH, so falling back silently would run a different binary than the one you named and make the failure impossible to diagnose',
+      [
+        `check the path: ls -l "${configured}"`,
+        'on macOS the binary lives at /Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli',
+        'or unset COPPERHEAD_KICAD_CLI to fall back to PATH',
+        'confirm with "$COPPERHEAD_KICAD_CLI version", then rerun',
+      ],
+    );
+    this.name = 'KicadCliBadOverrideError';
+  }
+}
+
 /** Well-known install locations when `kicad-cli` is not on PATH (macOS app bundle). */
 const FALLBACK_BINARIES = [
   '/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli',
@@ -41,8 +62,8 @@ export function resolveKicadCli(): string {
     if (cachedBinary === null) throw new KicadCliMissingError();
     return cachedBinary;
   }
-  const fromEnv = process.env.COPPERHEAD_KICAD_CLI?.trim();
-  if (fromEnv && existsSync(fromEnv)) {
+  const fromEnv = envOverride();
+  if (fromEnv) {
     cachedBinary = fromEnv;
     return fromEnv;
   }
@@ -50,10 +71,24 @@ export function resolveKicadCli(): string {
   return cachedBinary;
 }
 
+/**
+ * The `COPPERHEAD_KICAD_CLI` override, or null when unset. Set-but-missing is
+ * a hard error rather than a silent fallthrough to PATH: the user told us
+ * which binary to run, and quietly running a different one (or reporting
+ * "not found on PATH" with advice to set the variable they already set) is
+ * the worst possible answer.
+ */
+function envOverride(): string | null {
+  const fromEnv = process.env.COPPERHEAD_KICAD_CLI?.trim();
+  if (!fromEnv) return null;
+  if (!existsSync(fromEnv)) throw new KicadCliBadOverrideError(fromEnv);
+  return fromEnv;
+}
+
 /** After ENOENT on PATH, retry with a known macOS install path. */
 function fallbackAfterMissing(): string {
-  const fromEnv = process.env.COPPERHEAD_KICAD_CLI?.trim();
-  if (fromEnv && existsSync(fromEnv)) {
+  const fromEnv = envOverride();
+  if (fromEnv) {
     cachedBinary = fromEnv;
     return fromEnv;
   }

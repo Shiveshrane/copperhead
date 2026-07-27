@@ -15,8 +15,9 @@ import type { ModelSource } from '../config.js';
 import { loadConfig } from '../config.js';
 import { branchName, headCommit, isDirty, isGitRepo, uncommittedCount } from '../util/git.js';
 import { shortPath } from '../util/paths.js';
+import { redactSecrets } from '../util/redact.js';
 import { pickModel, type SelectItem } from '../util/select.js';
-import { KeyReader, promptWithSlashHints } from '../util/live-prompt.js';
+import { KeyReader, PASTE_OFF, PASTE_ON, promptWithSlashHints } from '../util/live-prompt.js';
 import { TerminalDock } from '../util/dock.js';
 import { DockRenderer } from '../agent/dock-renderer.js';
 import { callout } from '../agent/box.js';
@@ -43,6 +44,12 @@ export interface ReplOptions {
   version: string;
   kicadCliVersion: string;
   maxTurns?: number;
+  /**
+   * Let each turn run on a dirty working tree. Off by default, exactly as for
+   * `do`: a rollback hard-resets to the pre-run snapshot, so the preflight is
+   * the thing standing between a failed turn and the user's uncommitted work.
+   */
+  allowDirty?: boolean;
   /** When set, pause for proposal approval inside each run. */
   interactive?: boolean;
   /** Optional first request before the prompt loop. */
@@ -280,7 +287,7 @@ function defaultRunner(opts: ReplOptions, log: (l: string) => void) {
       request,
       model: opts.model,
       ...(opts.maxTurns !== undefined ? { maxTurns: opts.maxTurns } : {}),
-      allowDirty: true,
+      allowDirty: opts.allowDirty ?? false,
       interactive: opts.interactive ?? false,
       confirm: opts.confirm,
       ...(opts.onBudgetExhausted ? { onBudgetExhausted: opts.onBudgetExhausted } : {}),
@@ -303,8 +310,10 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
   const baseLog = opts.log ?? ((l: string) => console.log(l));
   // Every durable content line lands in the session history so PgUp/PgDn can
   // scroll back through it (the alt screen has no native scrollback), and is
-  // mirrored to a session log file by default (plain text, keys redacted per
-  // AC-4.1). Injected loggers (tests/embeds) own their sinks: no file then.
+  // mirrored to a session log file by default (plain text, run through the
+  // shared AC-4.1 redactor so this new persisted file is no weaker than the
+  // transcripts beside it). Injected loggers (tests/embeds) own their sinks:
+  // no file then.
   const history: string[] = [];
   const HISTORY_CAP = 5000;
   const SGR_RE = /\x1b\[[0-9;]*m/g;
@@ -318,7 +327,7 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
         logFilePath = path.join(dir, `repl-${new Date().toISOString().replace(/[:.]/g, '-')}.log`);
         logFile = createWriteStream(logFilePath, { flags: 'a' });
       }
-      logFile.write(l.replace(SGR_RE, '').replace(/sk-[A-Za-z0-9_-]+/g, 'sk-***') + '\n');
+      logFile.write(redactSecrets(l.replace(SGR_RE, '')) + '\n');
     } catch {
       // Best-effort: the shell never fails because the log file cannot.
     }
@@ -365,11 +374,13 @@ export async function runRepl(opts: ReplOptions): Promise<{ ok: boolean; turns: 
   // Own the full window (htop-style): switch to the alternate screen buffer,
   // so the shell underneath stays untouched, the viewport cannot scroll into
   // old shell content, and quitting restores the terminal exactly as it was.
-  (output as NodeJS.WritableStream).write('\x1b[?1049h\x1b[2J\x1b[H');
+  // Bracketed paste goes on with it, so a pasted multi-line request arrives as
+  // one delimited blob instead of submitting itself at the first newline.
+  (output as NodeJS.WritableStream).write(`\x1b[?1049h\x1b[2J\x1b[H${PASTE_ON}`);
   const restoreScreen = (): void => {
     // Reset the scroll region too: it survives the alt-screen switch on some
     // terminals and would leave the user's shell fenced to a partial window.
-    (output as NodeJS.WritableStream).write('\x1b[r\x1b[?1049l\x1b[?25h');
+    (output as NodeJS.WritableStream).write(`${PASTE_OFF}\x1b[r\x1b[?1049l\x1b[?25h`);
   };
   // Ctrl+C during an agent turn terminates the process (PR semantics); make
   // sure the terminal is never left stranded in the alternate buffer.

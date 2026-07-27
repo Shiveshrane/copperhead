@@ -115,20 +115,66 @@ export function normalizeNavKey(key: string): string {
   return key;
 }
 
+/** Bracketed-paste mode (DECSET 2004): on while the prompt owns the terminal. */
+export const PASTE_ON = '\x1b[?2004h';
+export const PASTE_OFF = '\x1b[?2004l';
+const PASTE_START = '\x1b[200~';
+const PASTE_END = '\x1b[201~';
+
+/** Assembler state; `paste` is true between the bracketed-paste markers. */
+export interface PendingKeys {
+  buf: string;
+  paste?: boolean;
+}
+
+/**
+ * Length of the trailing slice of `s` that could still grow into `marker`,
+ * so a marker split across two reads is never mistaken for pasted text.
+ */
+function partialTail(s: string, marker: string): number {
+  for (let n = Math.min(marker.length - 1, s.length); n > 0; n--) {
+    if (marker.startsWith(s.slice(s.length - n))) return n;
+  }
+  return 0;
+}
+
 /**
  * Push bytes through an escape-sequence assembler. Handles arrows that arrive
- * split across reads (`\x1b` then `[A`) — otherwise a lone ESC clears the menu.
+ * split across reads (`\x1b` then `[A`), and treats a bracketed paste as
+ * literal text so a pasted newline cannot submit the line mid-request.
+ *
+ * A lone `\x1b` is held back, because it is also the first byte of every arrow
+ * key; KeyReader flushes it as a real Esc once its disambiguation timer fires.
  */
-export function pushKeys(pending: { buf: string }, chunk: string, emit: (key: string) => void): void {
+export function pushKeys(pending: PendingKeys, chunk: string, emit: (key: string) => void): void {
   pending.buf += chunk;
   while (pending.buf.length) {
     const s = pending.buf;
+
+    // Inside a paste: everything up to the end marker is content, never a
+    // command. Control characters fold to spaces so a multi-line paste lands
+    // in the buffer as one request instead of submitting its first line.
+    if (pending.paste) {
+      const end = s.indexOf(PASTE_END);
+      const body = end === -1 ? s.slice(0, s.length - partialTail(s, PASTE_END)) : s.slice(0, end);
+      // Indexed, not for-of: the rest of the assembler emits single code
+      // units, and surrogate halves reassemble in the caller's buffer.
+      for (let i = 0; i < body.length; i++) emit(body[i]! < ' ' ? ' ' : body[i]!);
+      if (end === -1) {
+        pending.buf = s.slice(body.length);
+        return;
+      }
+      pending.paste = false;
+      pending.buf = s.slice(end + PASTE_END.length);
+      continue;
+    }
+
     if (s[0] !== '\x1b') {
       emit(s[0]!);
       pending.buf = s.slice(1);
       continue;
     }
-    // Incomplete ESC — wait for more bytes.
+    // Incomplete ESC — wait for more bytes (or for the Esc flush timer).
     if (s.length === 1) return;
 
     // SS3: ESC O A/B/C/D
@@ -147,8 +193,15 @@ export function pushKeys(pending: { buf: string }, chunk: string, emit: (key: st
       let j = 2;
       while (j < s.length && s.charCodeAt(j) >= 0x20 && s.charCodeAt(j) < 0x40) j++;
       if (j >= s.length) return; // incomplete
-      emit(s.slice(0, j + 1));
+      const seq = s.slice(0, j + 1);
       pending.buf = s.slice(j + 1);
+      // Paste markers steer the assembler; they are never keys themselves.
+      if (seq === PASTE_START) {
+        pending.paste = true;
+        continue;
+      }
+      if (seq === PASTE_END) continue; // stray end marker: nothing to close
+      emit(seq);
       continue;
     }
 
@@ -168,11 +221,24 @@ export class KeyReader {
   private ended = false;
   private paused = false;
   private readonly wasRaw: boolean | undefined;
-  private readonly pending = { buf: '' };
+  private readonly pending: PendingKeys = { buf: '' };
   private readonly onData: (c: string | Buffer) => void;
   private readonly onEnd: () => void;
+  /** Pending "is this a bare Esc or the head of an arrow key?" decision. */
+  private escTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(private readonly input: NodeJS.ReadStream) {
+  /**
+   * How long a lone `\x1b` waits for the rest of an escape sequence before it
+   * is delivered as a real Escape keypress. Every arrow key starts with the
+   * same byte, so without this a bare Esc would either be swallowed forever or
+   * eat the next arrow. 40ms is the usual terminal-emulator figure: far longer
+   * than the microseconds a real sequence takes to arrive, far shorter than a
+   * human follow-up keystroke.
+   */
+  constructor(
+    private readonly input: NodeJS.ReadStream,
+    private readonly escFlushMs = 40,
+  ) {
     this.wasRaw = input.isRaw;
     if (typeof input.setRawMode === 'function') input.setRawMode(true);
     input.resume();
@@ -186,20 +252,26 @@ export class KeyReader {
         if (String(c).includes('\x03')) process.kill(process.pid, 'SIGINT');
         return;
       }
-      pushKeys(this.pending, String(c), (key) => {
-        const waiter = this.waiters.shift();
-        if (waiter) waiter(key);
-        else this.queue.push(key);
-      });
+      this.clearEscTimer();
+      pushKeys(this.pending, String(c), (key) => this.deliver(key));
+      // A trailing lone ESC is ambiguous until either more bytes or the timer
+      // arrives; anything else left over is a genuinely partial sequence.
+      if (this.pending.buf === '\x1b') {
+        this.escTimer = setTimeout(() => {
+          this.escTimer = null;
+          if (this.pending.buf !== '\x1b') return;
+          this.pending.buf = '';
+          this.deliver('\x1b');
+        }, this.escFlushMs);
+        // Never hold the process open for a keypress that may never come.
+        this.escTimer.unref?.();
+      }
     };
     this.onEnd = (): void => {
+      this.clearEscTimer();
       // Flush a dangling ESC if the stream ends mid-sequence.
       if (this.pending.buf) {
-        for (const ch of this.pending.buf) {
-          const waiter = this.waiters.shift();
-          if (waiter) waiter(ch);
-          else this.queue.push(ch);
-        }
+        for (const ch of this.pending.buf) this.deliver(ch);
         this.pending.buf = '';
       }
       this.ended = true;
@@ -208,6 +280,19 @@ export class KeyReader {
 
     input.on('data', this.onData);
     input.on('end', this.onEnd);
+  }
+
+  private deliver(key: string): void {
+    const waiter = this.waiters.shift();
+    if (waiter) waiter(key);
+    else this.queue.push(key);
+  }
+
+  private clearEscTimer(): void {
+    if (this.escTimer) {
+      clearTimeout(this.escTimer);
+      this.escTimer = null;
+    }
   }
 
   async next(): Promise<string | null> {
@@ -238,8 +323,10 @@ export class KeyReader {
    */
   pause(): void {
     this.paused = true;
+    this.clearEscTimer();
     this.queue.length = 0;
     this.pending.buf = '';
+    this.pending.paste = false;
   }
 
   /** Resume delivering keys to the prompt. */
@@ -250,6 +337,7 @@ export class KeyReader {
   }
 
   close(): void {
+    this.clearEscTimer();
     this.input.off('data', this.onData);
     this.input.off('end', this.onEnd);
     this.ended = true;

@@ -15,6 +15,7 @@ import { pickModel, selectMenu } from '../src/util/select.js';
 import {
   keySequence,
   inputRowRows,
+  KeyReader,
   promptWithSlashHints,
   pushKeys,
   suggestionLines,
@@ -307,9 +308,107 @@ describe('promptWithSlashHints', () => {
     const pending = { buf: '' };
     const keys: string[] = [];
     pushKeys(pending, '\x1b', (k) => keys.push(k));
-    expect(keys).toEqual([]); // wait for rest of sequence
+    expect(keys).toEqual([]); // ambiguous: could still become an arrow
     pushKeys(pending, '[B', (k) => keys.push(k));
     expect(keys).toEqual(['\x1b[B']);
+  });
+
+  it('delivers a lone Escape once the disambiguation timer fires', async () => {
+    // Regression: a bare Esc was held in the assembler forever, because it is
+    // also the first byte of every arrow key. The dismiss handler therefore
+    // only fired one keystroke late, if at all.
+    vi.useFakeTimers();
+    try {
+      const input = new PassThrough();
+      (input as unknown as { isTTY: boolean }).isTTY = true;
+      const reader = new KeyReader(input as unknown as NodeJS.ReadStream, 40);
+      const first = reader.next();
+      input.write('\x1b');
+      await vi.advanceTimersByTimeAsync(39);
+      // Still ambiguous, so still nothing delivered.
+      let settled = false;
+      void first.then(() => (settled = true));
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(2);
+      expect(await first).toBe('\x1b');
+      reader.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not fire the Escape timer when the rest of an arrow arrives in time', async () => {
+    vi.useFakeTimers();
+    try {
+      const input = new PassThrough();
+      (input as unknown as { isTTY: boolean }).isTTY = true;
+      const reader = new KeyReader(input as unknown as NodeJS.ReadStream, 40);
+      const first = reader.next();
+      input.write('\x1b');
+      await vi.advanceTimersByTimeAsync(10);
+      input.write('[A');
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await first).toBe('\x1b[A'); // one arrow, not Esc then '[A'
+      reader.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('treats a bracketed paste as literal text, newlines and all', () => {
+    // Regression: with no paste mode, a pasted newline hit the submit branch,
+    // so a two-line change request started an agent run on only its first line.
+    const pending = { buf: '' };
+    const keys: string[] = [];
+    pushKeys(pending, `\x1b[200~rename R1 to R10\nand update the BOM\x1b[201~`, (k) => keys.push(k));
+    expect(keys.join('')).toBe('rename R1 to R10 and update the BOM');
+    expect(keys).not.toContain('\n');
+    expect(keys).not.toContain('\r');
+  });
+
+  it('holds back a paste-end marker split across reads', () => {
+    const pending = { buf: '' };
+    const keys: string[] = [];
+    pushKeys(pending, '\x1b[200~abc', (k) => keys.push(k));
+    expect(keys.join('')).toBe('abc');
+    // The marker arrives two bytes at a time; none of it may leak as text.
+    pushKeys(pending, '\x1b[2', (k) => keys.push(k));
+    expect(keys.join('')).toBe('abc');
+    pushKeys(pending, '01~z', (k) => keys.push(k));
+    expect(keys.join('')).toBe('abcz');
+  });
+
+  it('resumes normal key handling after the paste closes', () => {
+    const pending = { buf: '' };
+    const keys: string[] = [];
+    pushKeys(pending, '\x1b[200~hi\x1b[201~\x1b[B\r', (k) => keys.push(k));
+    expect(keys).toEqual(['h', 'i', '\x1b[B', '\r']);
+  });
+
+  it('ignores a stray paste-end marker with no paste open', () => {
+    const pending = { buf: '' };
+    const keys: string[] = [];
+    pushKeys(pending, 'a\x1b[201~b', (k) => keys.push(k));
+    expect(keys).toEqual(['a', 'b']);
+  });
+
+  it('a pasted multi-line request is submitted whole, not at its first newline', async () => {
+    setColorEnabled(false);
+    const output = new PassThrough();
+    const chunk = `\x1b[200~rename R1 to R10\nand update the BOM\x1b[201~\r`;
+    const pending = { buf: '' };
+    const queue: string[] = [];
+    pushKeys(pending, chunk, (k) => queue.push(k));
+    let i = 0;
+    const line = await promptWithSlashHints({
+      prompt: '> ',
+      commands: SLASH_COMMANDS,
+      output: output as unknown as NodeJS.WriteStream,
+      readKey: async () => (i < queue.length ? queue[i++]! : null),
+    });
+    expect(line).toBe('rename R1 to R10 and update the BOM');
   });
 
   it('SS3 arrow sequences work (\\x1bOA)', async () => {
@@ -359,9 +458,56 @@ describe('session log file', () => {
       const text = readFileSync(path.join(runsDir, logName!), 'utf8');
       expect(text).toContain('copperhead v0.7.0'); // banner captured, SGR stripped
       expect(text).toContain('do the thing'); // echoed request
-      expect(text).toContain('sk-***'); // AC-4.1 redaction
+      expect(text).toContain('[REDACTED]'); // AC-4.1 redaction
       expect(text).not.toContain('sk-SECRET_KEY_123');
       expect(text).not.toContain('\x1b[');
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('redacts every AC-4.1 pattern, not just sk- keys', async () => {
+    // Regression: the log used to carry its own inline /sk-.../ regex, so a
+    // Bearer / npm_ / ghp_ token echoed by a tool result was persisted in
+    // cleartext to a file the transcripts' shared redactor would have caught.
+    setColorEnabled(false);
+    const repo = await mkdtemp(path.join(tmpdir(), 'copperhead-repl-log-'));
+    const secrets = [
+      'sk-SECRET_KEY_123',
+      'Bearer abcdefghijklmnopqrstuvwxyz012345',
+      `npm_${'a'.repeat(36)}`,
+      `ghp_${'b'.repeat(36)}`,
+      `github_pat_${'c'.repeat(22)}`,
+    ];
+    try {
+      const { input, output } = fakeTty();
+      const done = runRepl({
+        repoRoot: repo,
+        model: 'gpt-5',
+        modelSource: 'flag',
+        version: '0.7.0',
+        kicadCliVersion: '9.0.0',
+        renderer: plainRenderer(() => {}),
+        input,
+        output,
+        runRequest: vi.fn(async (_req: string, log?: (l: string) => void) => {
+          for (const s of secrets) log?.(`tool output: ${s} trailing`);
+          return { outcome: 'success' as const };
+        }),
+      });
+      await new Promise((r) => setTimeout(r, 30));
+      input.write('publish it\n');
+      await new Promise((r) => setTimeout(r, 30));
+      input.write('/quit\n');
+      await done;
+
+      const runsDir = path.join(repo, '.copperhead', 'runs');
+      const { readdirSync, readFileSync } = await import('node:fs');
+      const logName = readdirSync(runsDir).find((f) => /^repl-.*\.log$/.test(f));
+      const text = readFileSync(path.join(runsDir, logName!), 'utf8');
+      for (const s of secrets) expect(text, s).not.toContain(s);
+      expect(text).toContain('[REDACTED]');
+      expect(text).toContain('trailing'); // surrounding context survives
     } finally {
       await rm(repo, { recursive: true, force: true });
     }
