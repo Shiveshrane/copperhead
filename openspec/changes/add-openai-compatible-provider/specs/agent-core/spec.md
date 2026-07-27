@@ -3,7 +3,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Provider list includes a compatible-endpoint mode
-The provider list (§4.4) SHALL include the OpenAI provider's compatible-endpoint mode: `compat` / `compat:<model-id>`, a keyed HTTP provider with a configurable `baseURL` and credential variable name, covering Groq, OpenRouter, Gemini's OpenAI-compatible endpoint, and a local Ollama server. `makeProvider()` SHALL accept optional compatible-endpoint settings alongside the model string; the parameter is optional, so callers that do not use the compat route are unaffected.
+The provider list (§4.4) SHALL include the OpenAI provider's compatible-endpoint mode: `compat:<model-id>`, a keyed HTTP provider with a configurable `baseURL` and credential variable name, covering Groq, OpenRouter, Gemini's OpenAI-compatible endpoint, and a local Ollama server. `makeProvider()` SHALL accept optional compatible-endpoint settings alongside the model string; the parameter is optional, so callers that do not use the compat route are unaffected.
 
 #### Scenario: the compat route reaches the configured endpoint
 - **GIVEN** compatible-endpoint settings resolved from config or environment

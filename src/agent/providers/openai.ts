@@ -7,8 +7,6 @@ export interface OpenAIProviderOptions {
   baseURL?: string | undefined;
   /** Name of the env var holding the key. Never the key itself. */
   apiKeyEnv?: string | undefined;
-  /** Test seam: inject the key directly instead of reading the environment. */
-  apiKey?: string | undefined;
 }
 
 export class OpenAIProvider implements Provider {
@@ -18,16 +16,16 @@ export class OpenAIProvider implements Provider {
 
   constructor(
     private readonly model = 'gpt-5',
-    apiKeyOrOptions?: string | OpenAIProviderOptions,
+    opts: OpenAIProviderOptions = {},
     env: NodeJS.ProcessEnv = process.env,
   ) {
-    // Back-compat: the second argument used to be the key itself. Existing
-    // callers (and `new OpenAIProvider(model)`) keep working unchanged.
-    const opts: OpenAIProviderOptions =
-      typeof apiKeyOrOptions === 'string' ? { apiKey: apiKeyOrOptions } : (apiKeyOrOptions ?? {});
+    // Credentials are always resolved through a named env var, never accepted
+    // as a literal value: the one way to supply a key keeps application code
+    // from ever holding one directly (mirrors AC-4.1 elsewhere). Tests inject
+    // fake values through the `env` argument, not through opts.
     const keyEnv = opts.apiKeyEnv ?? DEFAULT_API_KEY_ENV;
     this.baseURL = opts.baseURL;
-    this.apiKey = opts.apiKey ?? env[keyEnv];
+    this.apiKey = env[keyEnv];
     // A loopback endpoint (Ollama) serves the same API with no credential, and
     // it is the one backend that is both free and fully local — requiring a
     // dummy key there would be a papercut on the most useful config (D4).

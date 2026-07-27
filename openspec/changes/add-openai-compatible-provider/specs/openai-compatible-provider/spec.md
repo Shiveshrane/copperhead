@@ -29,7 +29,11 @@ The provider SHALL require a credential only when the resolved endpoint is remot
 - **THEN** it throws an error naming the expected environment variable, before any network call
 
 ### Requirement: `compat` routing is explicit
-`makeProvider()` SHALL route `compat` and `compat:<model-id>` to the OpenAI provider configured with the resolved `baseURL` and `apiKeyEnv`, and SHALL reject an empty override (`compat:`) with the same message shape as the other prefixed routes. No other model value SHALL consult `baseURL`.
+`makeProvider()` SHALL route `compat:<model-id>` to the OpenAI provider configured with the resolved `baseURL` and `apiKeyEnv`. Unlike `codex`/`claude-code`/`cursor`, the bare form has no default: `makeProvider()` SHALL reject both `compat` (no model id) and `compat:` (empty model id), each with an actionable message. No other model value SHALL consult `baseURL`.
+
+#### Scenario: a missing model id is rejected
+- **WHEN** `--model compat` is resolved
+- **THEN** the run fails with a message stating a compatible endpoint has no default model, and to use `compat:<model-id>`
 
 #### Scenario: an empty override is rejected
 - **WHEN** `--model compat:` is resolved

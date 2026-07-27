@@ -108,8 +108,13 @@ export async function makeProvider(
           : 'compat requires a model id and an endpoint; use "compat:<model-id>" and set baseURL (COPPERHEAD_BASE_URL or .copperhead/config.json)',
       );
     }
+    if (!settings.baseURL) {
+      throw new Error(
+        `compat:${compatModel} requires an endpoint; set baseURL (COPPERHEAD_BASE_URL or "baseURL" in .copperhead/config.json) — without one this would silently fall back to the real OpenAI API.`,
+      );
+    }
     return new OpenAIProvider(compatModel, {
-      ...(settings.baseURL ? { baseURL: settings.baseURL } : {}),
+      baseURL: settings.baseURL,
       apiKeyEnv: settings.apiKeyEnv,
     });
   }

@@ -129,7 +129,11 @@ export function checkCredential(
       };
     }
     const settings = compat ?? { apiKeyEnv: DEFAULT_API_KEY_ENV };
-    const where = settings.baseURL ?? '(no baseURL configured)';
+    // Display only: some endpoints embed a credential in the URL itself (a
+    // query param, userinfo). Redact before it reaches the report, same
+    // policy as the model value just above (AC-4.1). isLocalEndpoint() below
+    // still runs against the raw settings.baseURL, never this.
+    const where = redactSecrets(settings.baseURL ?? '(no baseURL configured)');
     if (!settings.baseURL) {
       return {
         name: 'provider',
@@ -173,6 +177,9 @@ const TRAINING_RISK_HOSTS: Record<string, string> = {
 export function checkPromptPrivacy(model: string, compat?: CompatSettings | undefined): DoctorCheck | null {
   if (model !== 'compat' && !model.startsWith('compat:')) return null;
   if (!compat?.baseURL) return null;
+  // A local endpoint has no third party to have a policy about: nothing
+  // leaves the machine, so "check the provider's terms" would be nonsensical.
+  if (isLocalEndpoint(compat.baseURL)) return null;
   let host: string;
   try {
     host = new URL(compat.baseURL).hostname.toLowerCase();

@@ -296,6 +296,16 @@ describe('doctor — OpenAI-compatible endpoints (issue #110)', () => {
     expect(bad.hint).toContain('GROQ_API_KEY');
   });
 
+  it('redacts a credential embedded in the endpoint URL from the displayed report', () => {
+    const leaky = { baseURL: 'https://api.example.com/v1?key=sk-shouldnotleak123', apiKeyEnv: 'X_API_KEY' };
+    const c = checkCredential('compat:model', { X_API_KEY: 'x' }, leaky);
+    expect(c.status).toBe('ok');
+    expect(c.detail).not.toContain('sk-shouldnotleak123');
+    expect(c.detail).toContain('[REDACTED]');
+    // The rest of the URL still shows, so the endpoint is still diagnosable.
+    expect(c.detail).toContain('api.example.com');
+  });
+
   it('a local endpoint passes with no key (D4)', () => {
     const c = checkCredential('compat:llama3', {}, { baseURL: 'http://localhost:11434/v1', apiKeyEnv: 'UNUSED' });
     expect(c.status).toBe('ok');
@@ -343,6 +353,12 @@ describe('doctor — OpenAI-compatible endpoints (issue #110)', () => {
   it('the privacy check does not apply to non-compat models', () => {
     expect(checkPromptPrivacy('gpt-5', groq)).toBeNull();
     expect(checkPromptPrivacy('claude', groq)).toBeNull();
+  });
+
+  it('bypasses entirely for a local endpoint: no third party to have a policy about', () => {
+    for (const baseURL of ['http://localhost:11434/v1', 'http://127.0.0.1:11434/v1', 'http://ollama.local/v1']) {
+      expect(checkPromptPrivacy('compat:phi3', { baseURL, apiKeyEnv: 'UNUSED' }), baseURL).toBeNull();
+    }
   });
 
   it('a training-risk warning still leaves the report ready (exit 0)', async () => {

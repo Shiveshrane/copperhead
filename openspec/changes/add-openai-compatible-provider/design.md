@@ -2,7 +2,7 @@
 
 ## D1. Selection is a model prefix, not a separate provider switch
 
-**Decision.** Route on `compat` / `compat:<model-id>`, resolved through the existing `resolveModel()` precedence chain. `baseURL` and `apiKeyEnv` are *settings* carried in config/env, not selectors.
+**Decision.** Route on `compat:<model-id>`, resolved through the existing `resolveModel()` precedence chain. `baseURL` and `apiKeyEnv` are *settings* carried in config/env, not selectors. Bare `compat` is always rejected, unlike `codex`/`claude-code`/`cursor` where the bare form selects a default: a compatible endpoint has no default model, so there is nothing safe to assume.
 
 **Rejected alternative: `COPPERHEAD_PROVIDER=openai-compatible`.** The issue's example proposes an environment switch. It was rejected because it introduces a second, parallel model-selection mechanism alongside `resolveModel()`, whose precedence chain (flag > `COPPERHEAD_MODEL` > config > available key) is currently the single answer to "which model runs". Two selectors have to define, document, and test their interaction: if `--model claude` and `COPPERHEAD_PROVIDER=openai-compatible` are both set, one has to win, and no reading of that is obvious. A prefix has none of that ambiguity and matches the four routes that already exist (`codex:`, `claude-code:`, `cursor:`, `claude`).
 

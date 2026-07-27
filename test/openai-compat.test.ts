@@ -164,8 +164,11 @@ describe('OpenAIProvider — compatible endpoints', () => {
     ).not.toThrow();
   });
 
-  it('keeps the old positional (model, apiKey) call shape working', () => {
-    expect(() => new OpenAIProvider('gpt-5', 'sk-test')).not.toThrow();
+  it('defaults cleanly with no options, resolving the key only through env (never a literal)', () => {
+    // OpenAIProviderOptions has no `apiKey` field: a key can only ever reach
+    // the provider by being present under the configured env var name,
+    // enforced at compile time (an `apiKey` property here would not typecheck).
+    expect(() => new OpenAIProvider('gpt-5', undefined, { OPENAI_API_KEY: 'sk-test' })).not.toThrow();
     expect(() => new OpenAIProvider('gpt-5', undefined, {})).toThrow('OPENAI_API_KEY is not set');
   });
 });
@@ -211,17 +214,36 @@ describe('makeProvider — compat routing', () => {
     });
   });
 
+  it('refuses compat:<model-id> with no endpoint configured — no silent fallback to real OpenAI (regression)', async () => {
+    // Bug: a model id alone skipped the guard entirely, so `new OpenAIProvider`
+    // was built with no baseURL and fell back to its own default client —
+    // silently hitting real api.openai.com with a non-OpenAI model id and
+    // whatever key apiKeyEnv resolved to.
+    await withKey(async () => {
+      await expect(makeProvider('compat:llama-3.1-8b-instant', false, { apiKeyEnv: 'GROQ_API_KEY' })).rejects.toThrow(
+        /requires an endpoint/,
+      );
+    });
+  });
+
   it('surfaces the missing key for a remote endpoint', async () => {
     await expect(makeProvider('compat:qwen-3-coder', false, groq)).rejects.toThrow('GROQ_API_KEY is not set');
   });
 
-  it('a stray COPPERHEAD_BASE_URL never redirects a plain gpt-5 run (D2)', () => {
-    // resolveCompatSettings would report the env base URL, but makeProvider only
-    // consults it on the compat route, so `gpt-5` still targets OpenAI.
+  it('a stray COPPERHEAD_BASE_URL never redirects a plain gpt-5 run (D2)', async () => {
+    // resolveCompatSettings correctly reports the env base URL — that alone
+    // does not prove makeProvider ignores it. Route through the real makeProvider,
+    // passing the resolved settings through exactly as loop.ts/create.ts do, so a
+    // future regression that accidentally threads `compat` into the non-compat
+    // fallback branch would actually fail this test.
     const s = resolveCompatSettings(base, { COPPERHEAD_BASE_URL: 'https://evil.example/v1' });
     expect(s.baseURL).toBe('https://evil.example/v1');
-    const p = new OpenAIProvider('gpt-5', 'sk-test');
-    // The provider built for a non-compat model carries no baseURL at all.
-    expect(JSON.stringify(p)).not.toContain('evil.example');
+    process.env.OPENAI_API_KEY = 'sk-test';
+    try {
+      const p = await makeProvider('gpt-5', false, s);
+      expect(JSON.stringify(p)).not.toContain('evil.example');
+    } finally {
+      delete process.env.OPENAI_API_KEY;
+    }
   });
 });
