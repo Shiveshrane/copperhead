@@ -149,6 +149,27 @@ describe('selectMenu', () => {
     expect(chosen).toBeNull();
   });
 
+  it('leaves the input stream alive after a pick (regression: for-await destroyed stdin)', async () => {
+    setColorEnabled(false);
+    const input = new NodePassThrough();
+    const output = new NodePassThrough();
+    const picking = selectMenu({
+      title: 'M',
+      items: [{ value: 'a', label: 'a' }],
+      input: input as unknown as NodeJS.ReadStream,
+      output: output as unknown as NodeJS.WriteStream,
+    });
+    input.write('\r');
+    const chosen = await picking;
+    expect(chosen).toBe('a');
+    expect((input as unknown as { destroyed: boolean }).destroyed).toBe(false);
+    // The stream must still deliver data to a later consumer.
+    const next = new Promise<string>((resolve) => input.once('data', (c) => resolve(String(c))));
+    input.write('later');
+    input.resume();
+    expect(await next).toBe('later');
+  });
+
   it('pickModel offers the provider choices and returns the selection', async () => {
     setColorEnabled(false);
     const output = new NodePassThrough();

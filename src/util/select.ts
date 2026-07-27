@@ -41,31 +41,59 @@ function menuLines(title: string, items: SelectItem[], index: number): string[] 
 }
 
 async function* stdinKeys(input: NodeJS.ReadStream): AsyncGenerator<string> {
+  // Listener-based on purpose: `for await` over a Readable destroys the
+  // stream when the consumer breaks out, which would kill stdin for
+  // whatever runs after the menu (e.g. the REPL's KeyReader).
   const wasRaw = input.isRaw;
   if (typeof input.setRawMode === 'function') input.setRawMode(true);
   input.resume();
   input.setEncoding('utf8');
+
+  const queue: string[] = [];
+  let ended = false;
+  let notify: (() => void) | null = null;
+  const onData = (c: string | Buffer): void => {
+    queue.push(String(c));
+    notify?.();
+  };
+  const onEnd = (): void => {
+    ended = true;
+    notify?.();
+  };
+  input.on('data', onData);
+  input.on('end', onEnd);
+
   try {
-    for await (const chunk of input) {
-      const s = String(chunk);
-      let i = 0;
-      while (i < s.length) {
-        if (s[i] === '\x1b' && s[i + 1] === '[') {
-          yield s.slice(i, i + 3);
-          i += 3;
-          continue;
-        }
-        // Lone Esc
-        if (s[i] === '\x1b') {
-          yield '\x1b';
+    for (;;) {
+      while (queue.length) {
+        const s = queue.shift()!;
+        let i = 0;
+        while (i < s.length) {
+          if (s[i] === '\x1b' && s[i + 1] === '[') {
+            yield s.slice(i, i + 3);
+            i += 3;
+            continue;
+          }
+          // Lone Esc
+          if (s[i] === '\x1b') {
+            yield '\x1b';
+            i += 1;
+            continue;
+          }
+          yield s[i]!;
           i += 1;
-          continue;
         }
-        yield s[i]!;
-        i += 1;
       }
+      if (ended) return;
+      await new Promise<void>((resolve) => {
+        notify = resolve;
+      });
+      notify = null;
     }
   } finally {
+    input.off('data', onData);
+    input.off('end', onEnd);
+    input.pause();
     if (typeof input.setRawMode === 'function') input.setRawMode(wasRaw ?? false);
   }
 }
