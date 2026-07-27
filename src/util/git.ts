@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, constants, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -97,17 +97,63 @@ async function snapshotUntracked(repo: string): Promise<string | null> {
   const listed = await git(repo, ['ls-files', '--others', '--exclude-standard', '-z']);
   const paths = listed.split('\0').filter(Boolean);
   if (!paths.length) return null;
+  const usable = await readableOnly(repo, paths);
+  if (!usable.length) return null;
   const indexFile = await scratchIndexPath(repo);
   try {
     await execa('git', ['update-index', '-z', '--add', '--stdin'], {
       cwd: repo,
       env: { GIT_INDEX_FILE: indexFile },
-      input: paths.join('\0') + '\0',
+      input: usable.join('\0') + '\0',
     });
     return (await gitWithIndex(repo, indexFile, ['write-tree'])) || null;
+  } catch (err) {
+    // A path that passed the readability check above and still failed here
+    // lost the race (permissions or existence changed in between). Same
+    // refusal, since the same file would be destroyed by the rollback.
+    throw unsnapshottable(String((err as Error).message).split('\n')[0] ?? 'unknown path');
   } finally {
     await rm(indexFile, { force: true }).catch(() => {});
   }
+}
+
+/**
+ * Drop untracked paths that no longer exist, and refuse on any that exist but
+ * cannot be read.
+ *
+ * `git update-index` aborts the whole batch with exit 128 on the first path it
+ * cannot open, and this runs before the first turn, so one stray root-owned or
+ * mode-000 file would otherwise refuse every `--allow-dirty` run with a bare
+ * `fatal: Unable to process path …`. A vanished path is dropped rather than
+ * refused: a file that no longer exists cannot be lost. One that exists but is
+ * unreadable is refused deliberately rather than skipped, because `restore()`'s
+ * `git clean -fd` deletes it either way, and skipping would quietly reinstate
+ * exactly the data loss the untracked snapshot exists to prevent.
+ */
+async function readableOnly(repo: string, paths: string[]): Promise<string[]> {
+  const usable: string[] = [];
+  for (const p of paths) {
+    try {
+      await access(path.join(repo, p), constants.R_OK);
+      usable.push(p);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw unsnapshottable(p);
+    }
+  }
+  return usable;
+}
+
+function unsnapshottable(what: string): PreflightError {
+  return new PreflightError(
+    `cannot read untracked file: ${what}`,
+    'a run started with --allow-dirty promises your uncommitted work survives a failed run, but a file copperhead cannot read cannot be snapshotted, and the rollback would delete it with nothing to restore it from',
+    [
+      `make it readable: chmod +r "${what}"`,
+      'or delete it, or add it to .gitignore so the rollback leaves it alone',
+      'or commit your work and rerun without --allow-dirty',
+    ],
+  );
 }
 
 /**

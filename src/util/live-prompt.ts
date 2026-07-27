@@ -256,7 +256,15 @@ export class KeyReader {
       pushKeys(this.pending, String(c), (key) => this.deliver(key));
       // A trailing lone ESC is ambiguous until either more bytes or the timer
       // arrives; anything else left over is a genuinely partial sequence.
-      if (this.pending.buf === '\x1b') {
+      //
+      // Never inside a paste: there the held `\x1b` is the first byte of a
+      // split `\x1b[201~` end marker, not a keypress. Flushing it would both
+      // deliver a phantom Escape and eat the ESC the marker needs, so paste
+      // mode could never close: every later byte would fold to a space
+      // (including Enter and Ctrl+C), leaving the session unusable from the
+      // keyboard. A real Esc typed inside a paste is content, and folds to a
+      // space like any other control byte.
+      if (this.pending.buf === '\x1b' && !this.pending.paste) {
         this.escTimer = setTimeout(() => {
           this.escTimer = null;
           if (this.pending.buf !== '\x1b') return;

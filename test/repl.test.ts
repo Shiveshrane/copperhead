@@ -357,6 +357,48 @@ describe('promptWithSlashHints', () => {
     }
   });
 
+  it('does not fire the Escape timer on a paste-end marker split at its ESC byte', async () => {
+    // Regression: the timer armed on any trailing lone `\x1b`, including the
+    // first byte of a split `\x1b[201~`. Over a slow link (large paste, ssh,
+    // tmux) the remaining five bytes could take longer than the 40ms window,
+    // so the timer delivered a phantom Escape and consumed the ESC the marker
+    // needed. Paste mode then never closed, and every later byte folded to a
+    // space: Enter could not submit and Ctrl+C could not interrupt, leaving no
+    // way out of the session from the keyboard.
+    vi.useFakeTimers();
+    try {
+      const input = new PassThrough();
+      (input as unknown as { isTTY: boolean }).isTTY = true;
+      const reader = new KeyReader(input as unknown as NodeJS.ReadStream, 40);
+      const keys: string[] = [];
+      let stop = false;
+      void (async () => {
+        while (!stop) {
+          const k = await reader.next();
+          if (k === null) break;
+          keys.push(k);
+        }
+      })();
+
+      input.write('\x1b[200~hello');
+      await vi.advanceTimersByTimeAsync(1);
+      input.write('\x1b'); // the marker's first byte, alone
+      await vi.advanceTimersByTimeAsync(50); // longer than the Esc window
+      input.write('[201~'); // the rest of it, late
+      input.write('\r');
+      input.write('\x03');
+      await vi.advanceTimersByTimeAsync(50);
+      stop = true;
+
+      // The paste closed: no phantom Escape, no marker text, and Enter and
+      // Ctrl+C are live again.
+      expect(keys.join('')).toBe('hello\r\x03');
+      reader.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('treats a bracketed paste as literal text, newlines and all', () => {
     // Regression: with no paste mode, a pasted newline hit the submit branch,
     // so a two-line change request started an agent run on only its first line.

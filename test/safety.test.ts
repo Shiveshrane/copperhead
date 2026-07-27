@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -9,6 +9,7 @@ import { withRetry } from '../src/util/retry.js';
 import { toolWriteFile, toolEditFile, toolSearch } from '../src/agent/filetools.js';
 import { Transcript } from '../src/agent/transcript.js';
 import { isDirty, hasCommits, snapshot, restore } from '../src/util/git.js';
+import { PreflightError } from '../src/util/preflight.js';
 import { tempFixtureRepo } from './helpers.js';
 import { execa } from 'execa';
 
@@ -243,6 +244,57 @@ describe('git guard (AC-3.8, AC-3.6)', () => {
       expect(existsSync(path.join(repo, 'hand-written-notes.md'))).toBe(false);
     } finally {
       warn.mockRestore();
+      await cleanup();
+    }
+  });
+
+  it('refuses the run, naming the file, when an untracked path cannot be read', async () => {
+    // Regression: every untracked path went straight into `git update-index`,
+    // which aborts the whole batch on the first it cannot open. snapshot() runs
+    // before the first turn, so one stray root-owned or mode-000 file refused
+    // the run with a bare "fatal: Unable to process path ..." and no hint that
+    // copperhead was taking a snapshot.
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      await writeFile(path.join(repo, 'tracked-change.txt'), 'x', 'utf8');
+      const locked = path.join(repo, 'unreadable.bin');
+      await writeFile(locked, 'secret\n', 'utf8');
+      await chmod(locked, 0o000);
+
+      await expect(snapshot(repo)).rejects.toThrow(PreflightError);
+      await expect(snapshot(repo)).rejects.toThrow(/unreadable\.bin/);
+      // The refusal has to be actionable, not just a git error surfaced raw.
+      await expect(snapshot(repo)).rejects.toThrow(/--allow-dirty/);
+
+      // Readable again: the snapshot goes through and captures it.
+      await chmod(locked, 0o644);
+      const snap = await snapshot(repo);
+      const tree = await execa('git', ['ls-tree', '-r', '--name-only', snap.untracked!], { cwd: repo });
+      expect(tree.stdout.split('\n')).toContain('unreadable.bin');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('ignores an untracked file that vanishes between listing and snapshot', async () => {
+    // The benign half of the same race: a watcher or build step deleting its
+    // own temp file must not refuse the run, because a file that no longer
+    // exists cannot be lost to the rollback.
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      await writeFile(path.join(repo, 'keep-me.txt'), 'keep\n', 'utf8');
+      const doomed = path.join(repo, 'vanishes.tmp');
+      await writeFile(doomed, 'transient\n', 'utf8');
+      // Deleted after git listed it, which is what the race amounts to.
+      const listed = await execa('git', ['ls-files', '--others', '--exclude-standard'], { cwd: repo });
+      expect(listed.stdout.split('\n')).toContain('vanishes.tmp');
+      await rm(doomed, { force: true });
+
+      const snap = await snapshot(repo);
+      const tree = await execa('git', ['ls-tree', '-r', '--name-only', snap.untracked!], { cwd: repo });
+      expect(tree.stdout.split('\n')).toContain('keep-me.txt');
+      expect(tree.stdout).not.toContain('vanishes.tmp');
+    } finally {
       await cleanup();
     }
   });
