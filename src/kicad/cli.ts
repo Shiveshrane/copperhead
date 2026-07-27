@@ -117,10 +117,10 @@ async function runKicad(args: string[], opts?: { reject?: boolean }): Promise<Aw
       throw new KicadCliMissingError();
     }
   }
-  if (opts?.reject === false) return res;
   if (res.failed && isNotFoundError(res)) {
     throw new KicadCliMissingError();
   }
+  if (opts?.reject === false) return res;
   if (res.failed) {
     throw Object.assign(new Error(res.stderr || res.stdout || `kicad-cli exited ${res.exitCode}`), res);
   }
