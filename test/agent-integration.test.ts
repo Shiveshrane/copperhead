@@ -33,6 +33,19 @@ const providers: { model: string; key: string | undefined }[] = [
     model: process.env.COPPERHEAD_TEST_CURSOR_MODEL ?? 'cursor',
     key: process.env.COPPERHEAD_TEST_CURSOR === '1' ? 'saved-cursor-login' : undefined,
   },
+  // OpenAI-compatible endpoint: Groq, OpenRouter, Gemini's compat endpoint,
+  // or a local Ollama. Runs only when both the
+  // endpoint and its model id are configured, so it stays skipped by default.
+  // This is the gate the documented zero-cost stack has to pass before it can
+  // be recommended: weaker free-tier models are worse at byte-exact anchored
+  // edits, so AC-3.x is where that shows up rather than in review.
+  {
+    model: process.env.COPPERHEAD_TEST_COMPAT_MODEL ?? 'compat',
+    key:
+      process.env.COPPERHEAD_TEST_COMPAT_MODEL && process.env.COPPERHEAD_BASE_URL
+        ? (process.env[process.env.COPPERHEAD_API_KEY_ENV ?? 'OPENAI_API_KEY'] ?? 'local-endpoint-no-key')
+        : undefined,
+  },
 ];
 
 function claudeCodeSdkInstalled(): boolean {

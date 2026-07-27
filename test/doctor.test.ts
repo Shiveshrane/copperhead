@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { runDoctor, checkCredential, formatDoctor, type DoctorDeps } from '../src/commands/doctor.js';
+import {
+  runDoctor,
+  checkCredential,
+  checkPromptPrivacy,
+  formatDoctor,
+  type DoctorDeps,
+} from '../src/commands/doctor.js';
 import { tempFixtureRepo } from './helpers.js';
 
 // Deps that make every host-dependent probe deterministic.
@@ -247,6 +253,131 @@ describe('copperhead doctor', () => {
       expect(provider.detail).toBe('no model configured');
       expect(provider.hint).not.toContain('no model configured');
       expect(provider.hint).toContain('COPPERHEAD_MODEL');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('reports "ambiguous", not "no model configured", when two credentials are both set', async () => {
+    // The two failure modes need different reactions: "no model configured"
+    // means add a key; "ambiguous" means an explicit choice is needed despite
+    // already having credentials. Conflating them into one message would send
+    // a user with two working keys off to fix something that is not broken.
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      const r = await runDoctor({
+        repoRoot: repo,
+        deps: deps({ env: { OPENAI_API_KEY: 'x', ANTHROPIC_API_KEY: 'y' } }),
+      });
+      const provider = r.checks.find((c) => c.name === 'provider')!;
+      expect(provider.status).toBe('fail');
+      expect(provider.detail).toContain('ambiguous');
+      expect(provider.detail).not.toBe('no model configured');
+      expect(provider.hint).toMatch(/OPENAI_API_KEY.*ANTHROPIC_API_KEY|2 credentials/);
+      expect(r.ok).toBe(false);
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe('doctor — OpenAI-compatible endpoints (issue #110)', () => {
+  const groq = { baseURL: 'https://api.groq.com/openai/v1', apiKeyEnv: 'GROQ_API_KEY' };
+
+  it('checks the configured key variable, not OPENAI_API_KEY', () => {
+    const ok = checkCredential('compat:qwen-3-coder', { GROQ_API_KEY: 'gsk-x' }, groq);
+    expect(ok.status).toBe('ok');
+    expect(ok.detail).toContain('GROQ_API_KEY set');
+    expect(ok.detail).toContain('api.groq.com');
+
+    // An OPENAI_API_KEY lying around must not satisfy a Groq endpoint.
+    const bad = checkCredential('compat:qwen-3-coder', { OPENAI_API_KEY: 'sk-x' }, groq);
+    expect(bad.status).toBe('fail');
+    expect(bad.hint).toContain('GROQ_API_KEY');
+  });
+
+  it('a local endpoint passes with no key (D4)', () => {
+    const c = checkCredential('compat:llama3', {}, { baseURL: 'http://localhost:11434/v1', apiKeyEnv: 'UNUSED' });
+    expect(c.status).toBe('ok');
+    expect(c.detail).toContain('no key required');
+  });
+
+  it('compat with no endpoint configured fails with an actionable hint', () => {
+    const c = checkCredential('compat:x', {}, { apiKeyEnv: 'OPENAI_API_KEY' });
+    expect(c.status).toBe('fail');
+    expect(c.hint).toContain('COPPERHEAD_BASE_URL');
+  });
+
+  it('rejects an empty compat override, matching makeProvider', () => {
+    expect(checkCredential('compat:', {}, groq).status).toBe('fail');
+  });
+
+  it('rejects bare `compat` even with a valid endpoint and key present (regression: was a false [ok])', () => {
+    // Bug: `model === 'compat:'` only caught the empty-override case, so bare
+    // `compat` (no colon at all) fell through to the credential check and
+    // reported [ok] whenever the key happened to be set — a false green for a
+    // run that would fail on its first turn with no model id. Must fail here
+    // the same way makeProvider now throws, or doctor "ready" is a lie.
+    const c = checkCredential('compat', { GROQ_API_KEY: 'gsk-x' }, groq);
+    expect(c.status).toBe('fail');
+    expect(c.detail).toContain('missing model id');
+  });
+
+  it('warns (never fails) on a host documented as training on prompts (D5)', () => {
+    const warn = checkPromptPrivacy('compat:gemini-2.0-flash', {
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
+      apiKeyEnv: 'GEMINI_API_KEY',
+    });
+    expect(warn?.status).toBe('warn');
+    expect(warn?.detail).toMatch(/train/i);
+    // warn must not block: `ok` is computed from `fail` alone.
+    expect(warn?.status).not.toBe('fail');
+  });
+
+  it('says plainly when a host has no policy on record, rather than implying safety', () => {
+    const c = checkPromptPrivacy('compat:qwen', groq);
+    expect(c?.status).toBe('info');
+    expect(c?.detail).toMatch(/cannot verify/i);
+  });
+
+  it('the privacy check does not apply to non-compat models', () => {
+    expect(checkPromptPrivacy('gpt-5', groq)).toBeNull();
+    expect(checkPromptPrivacy('claude', groq)).toBeNull();
+  });
+
+  it('a training-risk warning still leaves the report ready (exit 0)', async () => {
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      const r = await runDoctor({
+        repoRoot: repo,
+        model: 'compat:gemini-2.0-flash',
+        deps: deps({
+          env: {
+            GEMINI_API_KEY: 'x',
+            COPPERHEAD_BASE_URL: 'https://generativelanguage.googleapis.com/v1beta/openai',
+            COPPERHEAD_API_KEY_ENV: 'GEMINI_API_KEY',
+          },
+        }),
+      });
+      expect(r.checks.find((c) => c.name === 'privacy')?.status).toBe('warn');
+      expect(r.ok).toBe(true); // warn never blocks
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('makes no network request at all: doctor stays fully network-free', async () => {
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      const r = await runDoctor({
+        repoRoot: repo,
+        model: 'compat:qwen',
+        deps: deps({
+          env: { GROQ_API_KEY: 'gsk-x', COPPERHEAD_BASE_URL: groq.baseURL, COPPERHEAD_API_KEY_ENV: 'GROQ_API_KEY' },
+        }),
+      });
+      expect(r.checks.find((c) => c.name === 'endpoint')).toBeUndefined();
+      expect(r.ok).toBe(true);
     } finally {
       await cleanup();
     }
