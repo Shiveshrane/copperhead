@@ -111,6 +111,13 @@ export function checkCredential(model: string, env: NodeJS.ProcessEnv): DoctorCh
       detail: `${model} -> claude-code: uses Claude Code login (not verified offline)`,
     };
   }
+  if (model === 'cursor' || model.startsWith('cursor:')) {
+    return {
+      name: 'provider',
+      status: 'info',
+      detail: `${model} -> cursor: uses Cursor Agent CLI login (not verified offline)`,
+    };
+  }
   if (model === 'claude' || model.startsWith('claude')) {
     return env.ANTHROPIC_API_KEY
       ? { name: 'provider', status: 'ok', detail: `${model} -> anthropic: ANTHROPIC_API_KEY set` }

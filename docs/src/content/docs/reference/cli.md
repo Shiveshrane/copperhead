@@ -57,7 +57,7 @@ copperhead do "<change request>" [options]
 
 | Option | Description |
 | --- | --- |
-| `--model <model>` | `codex`, `gpt-5`, `claude`, `claude-code`, or a provider-specific model id. `codex` uses the saved local Codex login; `claude-code` uses your logged-in Claude Code (no `ANTHROPIC_API_KEY`). See [Configuration](/reference/configuration/#saved-login-claude-code). |
+| `--model <model>` | `codex`, `cursor`, `gpt-5`, `claude`, `claude-code`, or a provider-specific model id. Saved-login providers: `codex` (Codex CLI), `cursor` (Cursor Agent CLI), `claude-code` (Claude Code). |
 | `--max-turns <n>` | Turn budget for this run. Overrides `maxTurns` from config. |
 | `--allow-dirty` | Permit a dirty working tree. The snapshot is taken with `git stash create`. |
 | `--dry-run` | Propose the diff and write nothing. |
@@ -97,7 +97,7 @@ Checks, in order:
 - **node** — at least the version copperhead requires.
 - **kicad-cli** — present on PATH (a missing binary is reported, not thrown).
 - **git** — present on PATH (copperhead snapshots and commits its work).
-- **provider** — resolves the model the same way a run does (`--model` > `COPPERHEAD_MODEL` > config > available key) and checks its credential. Saved-login providers (`codex`, `claude-code`) need no key and report `info`.
+- **provider** — resolves the model the same way a run does (`--model` > `COPPERHEAD_MODEL` > config > available key) and checks its credential. Saved-login providers (`codex`, `cursor`, `claude-code`) need no key and report `info`.
 - **project** — informational: whether `.copperhead/config.json` exists and what it wires. Never blocks.
 
 | Exit code | Meaning |
@@ -139,7 +139,7 @@ copperhead create --brief brief.md [--model <model>] [--interactive]
 | Option | Description |
 | --- | --- |
 | `--brief <file>` | **Required.** The product brief, in markdown. |
-| `--model <model>` | `codex`, `gpt-5`, `claude`, or `claude-code` (saved-login Claude Code, no `ANTHROPIC_API_KEY`). |
+| `--model <model>` | `codex`, `cursor`, `gpt-5`, `claude`, or `claude-code` (saved-login; no model API key for those three). |
 | `--interactive` | Re-enable the human gates: spec approval, and a pause before export. |
 
 Exits 1 if any stage fails to complete, 0 when the pipeline finishes.

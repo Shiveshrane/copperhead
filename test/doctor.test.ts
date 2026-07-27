@@ -128,6 +128,8 @@ describe('copperhead doctor', () => {
     expect(checkCredential('o3', {}).status).toBe('fail');
     expect(checkCredential('codex:gpt-5', {}).status).toBe('info');
     expect(checkCredential('claude-code:opus', {}).status).toBe('info');
+    expect(checkCredential('cursor', {}).status).toBe('info');
+    expect(checkCredential('cursor:gpt-5', {}).status).toBe('info');
   });
 
   it('formatDoctor renders a ready/not-ready footer', () => {
