@@ -41,11 +41,7 @@ Once the user answers, perform the following actions:
      ```bash
      npm ci && npm run build && npm link
      ```
-   * **On macOS/Linux (outside checkout):** If `install.sh` is present in the repository, **first ask the user for explicit permission to run it**. If approved, run:
-     ```bash
-     ./install.sh --yes
-     ```
-     If they decline, or if `install.sh` is missing/fails, fall back to:
+   * **On macOS/Linux (outside checkout):** Run:
      ```bash
      npm install -g copperhead
      ```
