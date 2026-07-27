@@ -56,15 +56,17 @@ export async function revealBanner(
 
   out.write(HIDE);
   try {
-    // Fiducial power-on (in-place), then erase and cascade the real banner
-    // so scrollback keeps one clean lockup — not a trail of boot frames.
+    // Fiducial power-on pulsed three times (in-place), then erase and cascade
+    // the real banner so scrollback keeps one clean lockup — not boot frames.
     const frames = fiducialBootFrames();
     out.write('\n');
     for (const row of frames[0]!) out.write(CLEAR + row + '\n');
-    for (let i = 1; i < frames.length; i++) {
-      await sleep(frameMs);
-      out.write(`\x1b[${frames[i]!.length}A`);
-      for (const row of frames[i]!) out.write(CLEAR + row + '\n');
+    for (let cycle = 0; cycle < 3; cycle++) {
+      for (let i = cycle === 0 ? 1 : 0; i < frames.length; i++) {
+        await sleep(frameMs);
+        out.write(`\x1b[${frames[i]!.length}A`);
+        for (const row of frames[i]!) out.write(CLEAR + row + '\n');
+      }
     }
     await sleep(holdMs);
 

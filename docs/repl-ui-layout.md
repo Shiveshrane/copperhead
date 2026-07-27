@@ -52,8 +52,9 @@ function in `src/agent/theme.ts`, so color changes are one-line edits.
 First Ctrl+C at the prompt: input clears, row 30 becomes `press ctrl+c again to exit` [warn].
 
 First run in a repo (no `.copperhead/` yet): the boot animation plays slowly
-(fiducial power-on, then a deliberate banner cascade) and the New repository
-callout is shown. Later runs use the quick reveal and hide the callout.
+(fiducial power-on pulsed three times, then a deliberate banner cascade) and
+the New repository callout is shown. Later runs use the quick reveal (same
+three pulses, fast) and hide the callout.
 
 ## Color tokens (src/agent/theme.ts)
 
