@@ -88,4 +88,31 @@ Claude Code reference palette to diff against.
 
 To iterate: edit the annotated lines above (text, alignment, or `[token]`
 tags), paste the block back, and the code gets updated to match. Verify with
-`npm run demo:ui` (mock agent, standard recording script).
+`npm run demo:ui` (see below).
+
+## Demo recording (npm run demo:ui)
+
+`npm run demo:ui` from the repo root runs `scripts/ui-demo.ts` via tsx: the
+real REPL UI with a canned agent run, no build step, no API key, no repo
+mutations. Same script every take, so recordings are reproducible.
+
+Standard take:
+
+1. Let the banner settle and the via mark pulse
+2. Type `/`, hover a few commands with the arrow keys, Esc to dismiss
+3. Type `rename net KEY_DAH to KEY_DASH`, Enter, let the mock run play (~9s:
+   propose, validate, anchored edits, ERC clean, done + commit line)
+4. `/check` for the mock green ERC/DRC/drift pass
+5. Ctrl+C twice to exit
+
+The demo uses the current directory as the repo. A directory that already has
+`.copperhead/` gets the fast mark pulse and no callout; for the full
+first-run intro (slow pulse + New repository callout), run from a fresh
+directory:
+
+```bash
+cd $(mktemp -d) && node <repo>/node_modules/.bin/tsx <repo>/scripts/ui-demo.ts
+```
+
+The mark itself can be regenerated from the website logo geometry at any
+size with `node scripts/gen-logo.mjs <rows>`.
