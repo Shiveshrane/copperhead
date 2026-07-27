@@ -5,7 +5,9 @@ import path from 'node:path';
 import {
   resolveKicadCli,
   resetKicadCliCache,
+  kicadCliVersion,
   KicadCliBadOverrideError,
+  KicadCliMissingError,
 } from '../src/kicad/cli.js';
 
 /**
@@ -69,6 +71,31 @@ describe('kicad-cli binary resolution', () => {
   it('treats an empty or whitespace-only override as unset', () => {
     process.env.COPPERHEAD_KICAD_CLI = '   ';
     expect(resolveKicadCli()).toBe('kicad-cli');
+  });
+
+  it('reports the binary as missing when PATH has no kicad-cli and no bundle matches', async () => {
+    // Drives the real ENOENT chain: PATH lookup fails, fallbackAfterMissing
+    // finds no macOS app bundle, and the run is refused with the install
+    // instructions rather than a raw spawn error.
+    delete process.env.COPPERHEAD_KICAD_CLI;
+    const savedPath = process.env.PATH;
+    process.env.PATH = dir; // an empty directory: nothing resolvable on it
+    try {
+      await expect(kicadCliVersion()).rejects.toBeInstanceOf(KicadCliMissingError);
+    } finally {
+      process.env.PATH = savedPath;
+    }
+  });
+
+  it('refuses when an override that existed at resolve time disappears mid-session', async () => {
+    const bin = path.join(dir, 'kicad-cli');
+    await writeFile(bin, '#!/bin/sh\nexit 0\n', 'utf8');
+    await chmod(bin, 0o755);
+    process.env.COPPERHEAD_KICAD_CLI = bin;
+    expect(resolveKicadCli()).toBe(bin);
+    await rm(bin, { force: true });
+    // An explicit override that vanished must not silently fall back to PATH.
+    await expect(kicadCliVersion()).rejects.toBeInstanceOf(KicadCliMissingError);
   });
 
   it('caches the resolved binary until the cache is reset', async () => {
