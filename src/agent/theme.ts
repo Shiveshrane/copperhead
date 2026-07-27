@@ -27,10 +27,15 @@ function paint(code: string, s: string): string {
 export const dim = (s: string): string => paint('90', s);
 /** Primary content — bright white (typed input, key values). */
 export const bright = (s: string): string => paint('97', s);
-/** Brand/title emphasis — bold bright white. */
-export const bold = (s: string): string => paint('1;97', s);
-/** Brand / active accent — copper #b87333 ≈ 256-color 172. */
-export const copper = (s: string): string => paint('38;5;172', s);
+
+/** Exact brand copper #b87333 where truecolor is available; warm 256 fallback. */
+const COPPER_SGR = /truecolor|24bit/i.test(process.env.COLORTERM ?? '')
+  ? '38;2;184;115;51'
+  : '38;5;173';
+/** Brand/title emphasis — bold copper. */
+export const bold = (s: string): string => paint(`1;${COPPER_SGR}`, s);
+/** Brand / active accent — exact copper #b87333 (truecolor), 256-color 173 fallback. */
+export const copper = (s: string): string => paint(COPPER_SGR, s);
 /** Success — PCB green. */
 export const ok = (s: string): string => paint('32', s);
 /** Busy / caution — amber. */

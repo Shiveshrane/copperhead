@@ -54,8 +54,8 @@ First Ctrl+C at the prompt: input clears, row 30 becomes `press ctrl+c again to 
 
 | Token     | SGR         | Current value            | Used for                                  |
 | --------- | ----------- | ------------------------ | ----------------------------------------- |
-| `copper`  | `38;5;172`  | #d78700 (brand: #b87333) | mark, prompt ❯, callout bar, meta dot     |
-| `bold`    | `1;97`      | bold white               | `copperhead` name in banner               |
+| `copper`  | `38;2;184;115;51` | #b87333 (brand: #b87333) | mark, prompt ❯, callout bar, meta dot     |
+| `bold`    | `1;38;2;184;115;51` | bold #b87333              | `copperhead` name in banner               |
 | `bright`  | `97`        | white                    | typed input text                          |
 | `dim`     | `90`        | gray                     | hints, placeholder, rules, version, paths |
 | `ok`      | `32`        | green                    | success lines (`check: all green`)        |
@@ -63,8 +63,10 @@ First Ctrl+C at the prompt: input clears, row 30 becomes `press ctrl+c again to 
 | `err`     | `31`        | red                      | failures                                  |
 | `inverse` | `7`         | reverse video            | block caret, hovered menu label           |
 
-Note: `copper` does not yet match the brand #b87333 exactly, swap is one line
-in `theme.ts` (truecolor `38;2;184;115;51` with a 256-color fallback).
+Note: `copper` is the exact brand #b87333 on truecolor terminals
+(COLORTERM=truecolor/24bit); terminals without truecolor fall back to
+256-color 173. See [claude-ui-layout.md](claude-ui-layout.md) for the measured
+Claude Code reference palette to diff against.
 
 ## Region -> source map
 
