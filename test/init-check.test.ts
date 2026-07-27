@@ -159,7 +159,17 @@ describe('the offline commands are LLM-free and network-free by construction (AC
   // for network capability itself: if nothing reachable from these entrypoints can
   // open a socket, they cannot call anything, on any host. `execa` is deliberately
   // absent from the list: kicad-cli is a subprocess, not a network client.
-  const FORBIDDEN = /providers\/|from 'openai'|@anthropic-ai|node:https?'|'undici'|'axios'|'got'|\bfetch\(/;
+  // Every socket-capable node protocol, not just http/https: node:net and node:tls
+  // open raw TCP/TLS, node:http2 is a client in its own right, and node:dgram does
+  // UDP. Quote-agnostic so a double-quoted import cannot slip past.
+  const FORBIDDEN =
+    /providers\/|['"]openai['"]|@anthropic-ai|node:(?:https?|net|tls|http2|dgram)['"]|['"](?:undici|axios|got|node-fetch|ws)['"]|\bfetch\(/;
+
+  // Matches static, side-effect (`import './x.js'`), dynamic (`await import('./x.js')`),
+  // and double-quoted relative imports. A form the traversal does not recognize is
+  // worse than a missing pattern: the walk stops early and the scan reports clean on
+  // a graph it never finished reading.
+  const RELATIVE_IMPORT = /(?:from|import)\s*\(?\s*['"](\.[^'"]+)\.js['"]/g;
 
   for (const entry of ['src/commands/check.ts', 'src/commands/export.ts']) {
     it(`${entry} imports nothing that can reach the network`, async () => {
@@ -171,7 +181,7 @@ describe('the offline commands are LLM-free and network-free by construction (AC
         seen.add(file);
         const text = await readFile(file, 'utf8');
         expect(text, file).not.toMatch(FORBIDDEN);
-        for (const m of text.matchAll(/from '(\.[^']+)\.js'/g)) {
+        for (const m of text.matchAll(RELATIVE_IMPORT)) {
           queue.push(path.join(path.dirname(file), m[1]!) + '.ts');
         }
       }
@@ -179,6 +189,40 @@ describe('the offline commands are LLM-free and network-free by construction (AC
       expect(seen.size, `${entry} transitive graph`).toBeGreaterThan(3);
     });
   }
+
+  it('the scan itself recognizes the forms it claims to', () => {
+    // The scan is only as good as these two patterns, and a gap in either fails
+    // open: it reports clean rather than failing. Pin both against the forms that
+    // would otherwise slip through, so the guarantee cannot quietly weaken.
+    for (const leak of [
+      "import net from 'node:net';",
+      'import "node:tls";',
+      "await import('node:http2')",
+      'import dgram from "node:dgram";',
+      "import http from 'node:http';",
+      "from 'undici'",
+      'from "axios"',
+      'import x from "openai"',
+      "from './providers/openai.js'",
+      'fetch(url)',
+    ]) {
+      expect(FORBIDDEN.test(leak), leak).toBe(true);
+    }
+    // kicad-cli is a subprocess, not a network client, and fs/path are not sockets
+    for (const allowed of ["import { execa } from 'execa';", "from 'node:fs/promises'", "from 'node:path'"]) {
+      expect(FORBIDDEN.test(allowed), allowed).toBe(false);
+    }
+    // every relative-import form must be walked, not just single-quoted `from`
+    for (const form of [
+      "from './a.js'",
+      'from "./b.js"',
+      "import './c.js';",
+      "await import('./d.js')",
+      'await import("./e.js")',
+    ]) {
+      expect([...form.matchAll(RELATIVE_IMPORT)], form).toHaveLength(1);
+    }
+  });
 });
 
 describe('fab export (create stage 6 tooling)', () => {
