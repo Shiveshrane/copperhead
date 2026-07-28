@@ -237,22 +237,42 @@ async function runWithMemory(
   // actually use. Both surfaces below are built once, up front, so without this
   // they would record "lmstudio": run metadata could not say which model
   // designed the board, and two different local models would share cache entries
-  // (F6). Best-effort — a failure here (e.g. server down) falls back to the
-  // routing string and is surfaced properly by the first chat() instead.
+  // (F6). Best-effort: a failure here does not fail the run, but it does cost us
+  // the cache key (see below).
   //
-  // Timed out like any other provider call: this runs BEFORE the turn loop, so
-  // its heartbeat, watchdog, and retry machinery do not exist yet. A server that
-  // accepts the connection but never answers (still loading a model, wedged)
-  // would otherwise hang the run here with nothing to interrupt it.
-  const effectiveModel =
-    (await withTimeout(
-      async () => provider.resolvedModelId?.(),
-      config.turnTimeoutMs,
-    ).catch(() => undefined)) ?? opts.model;
+  // Bounded far tighter than a turn. This runs BEFORE the turn loop, so the
+  // heartbeat, watchdog, and retry machinery do not exist yet, and it runs before
+  // the run header prints — a server that accepts the connection but never
+  // answers would otherwise show the user a blank terminal for the full turn
+  // timeout (10 min by default) with no way to tell a hang from a slow start.
+  // Listing models on a local server is a millisecond operation; 10s is already
+  // generous, and the cost of being wrong is only the cache, not the run.
+  const MODEL_PROBE_TIMEOUT_MS = 10_000;
+  let probedModel: string | undefined;
+  if (provider.resolvedModelId) {
+    log(`asking ${opts.model} which model is loaded`);
+    probedModel = await withTimeout(
+      async () => provider.resolvedModelId?.(log),
+      MODEL_PROBE_TIMEOUT_MS,
+    ).catch((err: unknown) => {
+      log(`could not resolve the model id (${(err as Error).message}); response caching is off for this run`);
+      return undefined;
+    });
+  }
+  const effectiveModel = probedModel ?? opts.model;
   // Cache every turn's response so a retried/restarted stage replays what it
   // already paid for instead of re-calling the model (repo-scoped, cross-run).
   // Skip an injected provider (tests drive scripted providers directly).
-  if (config.llmCache && !opts.provider) {
+  //
+  // Also skip it when the probe failed on a provider that offers one. Falling
+  // back to the routing string looks harmless but re-opens the exact bug the
+  // probe exists to close: `/v1/models` can be slow while `/chat/completions`
+  // works, so the run would proceed normally on model A, cache its turns under
+  // the key "lmstudio", and a later run on model B would replay them. Losing
+  // caching for one degraded run is much cheaper than serving one model's
+  // reasoning as another's.
+  const cacheKeyIsReal = !provider.resolvedModelId || probedModel !== undefined;
+  if (config.llmCache && !opts.provider && cacheKeyIsReal) {
     provider = new CachingProvider(provider, path.join(repoRoot, CONFIG_DIR, 'llm-cache'), log, effectiveModel);
   }
   providers.add(provider);

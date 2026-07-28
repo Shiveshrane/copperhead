@@ -55,6 +55,10 @@ export interface Provider {
    * model designed the board, and so the response-cache key distinguishes two
    * different local models instead of replaying one's turns for the other (F6).
    * Best-effort: the loop falls back to the routing string if this throws.
+   *
+   * `log` lets a provider surface how it arrived at the id, for the case where
+   * resolution is a choice rather than a lookup (a server listing several models
+   * cannot say which is loaded). Optional so existing providers are unaffected.
    */
-  resolvedModelId?(): Promise<string>;
+  resolvedModelId?(log?: (line: string) => void): Promise<string>;
 }

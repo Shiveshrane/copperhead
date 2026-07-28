@@ -147,6 +147,8 @@ copperhead do "add reverse-polarity protection on VIN" --model lmstudio
 
 Plain `lmstudio` asks the server which model is loaded and uses it, so the real model id lands in your run metadata and the response cache. That lookup uses the OpenAI `/v1/models` endpoint, so on a server that does not expose one, name the model explicitly with `lmstudio:<model-id>`, which skips discovery entirely.
 
+`/v1/models` reports what a server can serve, not what it currently has loaded, and no field distinguishing the two is portable across LM Studio, Ollama, and vLLM. When the server lists more than one model, copperhead takes the first, logs which one it took and how many alternatives there were, and names it in any tool-calling error. If that is not the model you meant to run, pin it with `lmstudio:<model-id>` rather than relying on list order.
+
 Set `LMSTUDIO_BASE_URL` to point elsewhere. Since the only requirement is the OpenAI chat-completions protocol with tool calling, this also reaches other local servers:
 
 ```sh

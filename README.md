@@ -164,7 +164,7 @@ No API key is involved. copperhead sends a placeholder credential rather than yo
 
 What is guaranteed is the destination, not the distance: prompts go to whatever `LMSTUDIO_BASE_URL` names and nowhere else. At the default `http://localhost:1234/v1` that means nothing leaves your machine. Point it at a remote host and your design content goes there instead (still unbilled and still carrying no cloud key, but no longer local).
 
-The model **must support function/tool calling**: every action copperhead takes is a tool call. Plain `lmstudio` uses whichever model the server has loaded, which requires the server to expose the OpenAI `/v1/models` endpoint; `lmstudio:<model-id>` names one explicitly and skips that lookup.
+The model **must support function/tool calling**: every action copperhead takes is a tool call. Plain `lmstudio` asks the server which model to use, which requires the server to expose the OpenAI `/v1/models` endpoint. That endpoint reports what a server *can* serve, not what it has loaded, so on a server that lists more than one model (Ollama, or LM Studio with JIT loading) copperhead takes the first and says so; pin the one you want with `lmstudio:<model-id>`.
 
 Tool-capable is necessary but not sufficient. A copperhead run is a long multi-step loop over exact-match file edits, so expect smaller models to need more turns and to sometimes not converge: in our testing a 12B model completed a net rename about half the time, failing the rest on turn-budget exhaustion after looping on anchored edits. Prefer a larger coder-tuned model, and raise `--max-turns` if runs end on the budget. A failed run rolls back to the pre-run snapshot and stashes the work, so the cost of not converging is time, not a damaged board.
 

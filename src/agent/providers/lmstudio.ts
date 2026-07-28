@@ -70,22 +70,31 @@ export class LMStudioProvider extends OpenAIProvider {
   }
 
   /**
-   * `lmstudio:<id>` names the model outright. Bare `lmstudio` asks the server
-   * which model is loaded (D3) and memoizes the answer for the run, so the real
-   * id — not a placeholder — reaches run metadata and the response-cache key
-   * (`modelId`, F6); two different local models must not share cache entries.
-   */
-  /**
-   * Public entry point for the same discovery, so `loop.ts` can learn the real
-   * model id before it builds the response cache and the run metadata — those
-   * are constructed up front, and would otherwise record the routing string
+   * Public entry point for discovery, so `loop.ts` can learn the real model id
+   * before it builds the response cache and the run metadata — those are
+   * constructed up front, and would otherwise record the routing string
    * `lmstudio` and let two different local models share cache entries (F6).
    */
-  async resolvedModelId(): Promise<string> {
-    return this.resolveModelId(await this.client());
+  async resolvedModelId(log?: (line: string) => void): Promise<string> {
+    return this.resolveModelId(await this.client(), log);
   }
 
-  protected override async resolveModelId(client: ChatClientLike): Promise<string> {
+  /**
+   * `lmstudio:<id>` names the model outright. Bare `lmstudio` asks the server
+   * which model is loaded (D3) and memoizes the answer for the run.
+   *
+   * `/v1/models` reports what a server can serve, not what it has loaded, and no
+   * field distinguishing the two is portable across LM Studio, Ollama, and vLLM.
+   * So the first entry is a pick, not a lookup: on Ollama it is one of every
+   * pulled model, and on LM Studio with JIT loading one of every downloaded one.
+   * Guessing silently is the real hazard — the board would be designed by a model
+   * the user did not choose — so when the server offers a choice we say which one
+   * we took and how to pin it, rather than pretending it was determined.
+   */
+  protected override async resolveModelId(
+    client: ChatClientLike,
+    log?: (line: string) => void,
+  ): Promise<string> {
     if (this.model) return this.model;
     if (this.discovered) return this.discovered;
     const listed = await client.models.list();
@@ -94,6 +103,15 @@ export class LMStudioProvider extends OpenAIProvider {
       throw new Error(
         `LM Studio is running at ${this.endpoint} but no model is loaded — load one from the ` +
           'Developer tab (or `lms load <model>`), or name it explicitly with --model lmstudio:<model-id>',
+      );
+    }
+    if (listed.data.length > 1) {
+      const others = listed.data.length - 1;
+      log?.(
+        `${this.endpoint} listed ${listed.data.length} models; using "${id}". ` +
+          `A server that lists more than the loaded model (Ollama, or LM Studio with JIT loading) ` +
+          `may not have this one running — pin it with --model lmstudio:<model-id> ` +
+          `(${others} other${others === 1 ? '' : 's'} available).`,
       );
     }
     this.discovered = id;
@@ -137,10 +155,17 @@ export class LMStudioProvider extends OpenAIProvider {
       );
     }
     if (isToolsUnsupported(err)) {
+      // Name the model, not just the endpoint. Bare `lmstudio` picks the first
+      // listed id, which on a multi-model server may not be the one the user
+      // believes is running; blaming "the model at <endpoint>" then sends them
+      // after the wrong problem. Naming it makes the claim checkable.
+      const which = this.model ?? this.discovered;
+      const subject = which ? `the model "${which}" at ${this.endpoint}` : `the model at ${this.endpoint}`;
       return new Error(
-        `the model loaded at ${this.endpoint} rejected the tool-calling request — copperhead ` +
-          'needs a tool-capable model (one whose card advertises function/tool calling), since ' +
-          `every action it takes is a tool call (original error: ${(err as Error)?.message ?? String(err)})`,
+        `${subject} rejected the tool-calling request — copperhead needs a tool-capable model ` +
+          '(one whose card advertises function/tool calling), since every action it takes is a ' +
+          `tool call. If that is not the model you expected, pin it with --model lmstudio:<model-id> ` +
+          `(original error: ${(err as Error)?.message ?? String(err)})`,
         { cause: err },
       );
     }

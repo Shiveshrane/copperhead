@@ -34,16 +34,26 @@ The endpoint SHALL NOT be restricted to loopback: remote and cloud-hosted addres
 - **WHEN** `LMSTUDIO_BASE_URL` is set but empty or whitespace-only, as when `.env.example` is copied unedited
 - **THEN** the endpoint resolves to `http://localhost:1234/v1` and no request is made to the SDK's default cloud host
 
-### Requirement: The loaded model is identified, not assumed
-When the model id is given explicitly as `lmstudio:<model-id>`, the provider SHALL send that id. When bare `lmstudio` is used, the provider SHALL ask the server which model is loaded, SHALL use the first model reported, and SHALL reuse that answer for the remainder of the run rather than asking again per turn. The resolved id SHALL be the model id used in run metadata and in the response-cache key, so two different local models do not share cached turns.
+### Requirement: The model is identified, not assumed
+When the model id is given explicitly as `lmstudio:<model-id>`, the provider SHALL send that id. When bare `lmstudio` is used, the provider SHALL ask the server for its model list, SHALL use the first model reported, and SHALL reuse that answer for the remainder of the run rather than asking again per turn. The resolved id SHALL be the model id used in run metadata and in the response-cache key, so two different local models do not share cached turns.
 
-#### Scenario: Bare lmstudio discovers the loaded model once
+`/v1/models` reports what a server can serve rather than what it has loaded, and no field distinguishing the two is portable across LM Studio, Ollama, and vLLM. Where the server reports more than one model the first entry is therefore a choice, not a determination, and the run SHALL make that choice visible rather than silent: it SHALL report which id it took and how many alternatives existed, and SHALL name that id in any tool-calling failure so the diagnostic can be checked against the model the operator believes is running.
+
+#### Scenario: Bare lmstudio discovers the model once
 - **WHEN** a multi-turn `lmstudio` run executes with no explicit model id
 - **THEN** the server is asked for its model list exactly once, and every turn is sent with the discovered model id
+
+#### Scenario: A multi-model server makes its pick visible
+- **WHEN** the server reports several models and no explicit id was given
+- **THEN** the run reports the id it selected, how many alternatives were listed, and that `lmstudio:<model-id>` pins one, and a subsequent tool-calling error names the selected id rather than only the endpoint
 
 #### Scenario: An explicit model id is used verbatim
 - **WHEN** `--model lmstudio:<model-id>` is resolved
 - **THEN** that id is sent to the server and no model-discovery request is made
+
+#### Scenario: A failed probe disables caching rather than keying it on the routing string
+- **WHEN** discovery fails or exceeds its bound while the server still serves completions
+- **THEN** the run continues using the routing string for metadata, response caching is disabled for that run, and no cache entry is written that a later run on a different local model could replay
 
 ### Requirement: No silent fallback to a billed provider
 An `lmstudio` run that is rate-limited or errors SHALL NOT be silently continued on a keyed (`gpt-5`/`claude`) provider, even when those keys are present in the environment. The provider SHALL preserve the underlying error's status so copperhead's retry/backoff still applies, but the provider-swap failover SHALL NOT select a keyed provider for an `lmstudio` run.

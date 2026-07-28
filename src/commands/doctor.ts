@@ -98,19 +98,6 @@ async function gitCheck(probe: () => Promise<string>): Promise<DoctorCheck> {
  * endpoint need no key and can't be verified offline, so they report `info`
  * (which does not block `ok`).
  */
-/**
- * The endpoint an `lmstudio` run would use, resolved exactly as the provider
- * does: blank or whitespace-only counts as unset, so a copied-but-unedited
- * `.env.example` reports the default rather than an empty string.
- *
- * Duplicated rather than imported so `doctor` keeps its offline preflight free of
- * any provider module. A test asserts this stays equal to the provider's
- * `LMSTUDIO_DEFAULT_BASE_URL`, so the two cannot drift silently.
- */
-function lmstudioEndpoint(env: NodeJS.ProcessEnv): string {
-  return env.LMSTUDIO_BASE_URL?.trim() || 'http://localhost:1234/v1';
-}
-
 export function checkCredential(model: string, env: NodeJS.ProcessEnv): DoctorCheck {
   // A pasted API key can end up as the model value (--model sk-..., a stray
   // COPPERHEAD_MODEL); redact it before it reaches the report, same policy as
@@ -178,6 +165,19 @@ export function checkCredential(model: string, env: NodeJS.ProcessEnv): DoctorCh
         detail: `${shown} -> openai: OPENAI_API_KEY not set`,
         hint: 'export OPENAI_API_KEY=... (or use --model codex for saved login).',
       };
+}
+
+/**
+ * The endpoint an `lmstudio` run would use, resolved exactly as the provider
+ * does: blank or whitespace-only counts as unset, so a copied-but-unedited
+ * `.env.example` reports the default rather than an empty string.
+ *
+ * Duplicated rather than imported so `doctor` keeps its offline preflight free of
+ * any provider module. A test asserts this stays equal to the provider's
+ * `LMSTUDIO_DEFAULT_BASE_URL`, so the two cannot drift silently.
+ */
+function lmstudioEndpoint(env: NodeJS.ProcessEnv): string {
+  return env.LMSTUDIO_BASE_URL?.trim() || 'http://localhost:1234/v1';
 }
 
 function providerCheck(

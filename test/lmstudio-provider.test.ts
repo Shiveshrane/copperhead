@@ -278,11 +278,94 @@ describe('LMStudioProvider — errors', () => {
     await expect(provider.chat(messages, tools)).rejects.toThrow(/localhost:11434/);
   });
 
+  // Every shape a dead endpoint can take. Only ECONNREFUSED was covered before;
+  // a regression in any of the others turns the actionable message back into a
+  // raw SDK error, which is the whole failure this diagnostic exists to prevent.
+  const unreachable: Array<[string, () => unknown]> = [
+    ['ECONNREFUSED on the cause', () => connectionError()],
+    ['ENOTFOUND (bad hostname)', () => Object.assign(new Error('getaddrinfo ENOTFOUND nope'), { code: 'ENOTFOUND' })],
+    ['ECONNRESET mid-request', () => Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' })],
+    ['EHOSTUNREACH (no route)', () => Object.assign(new Error('connect EHOSTUNREACH'), { code: 'EHOSTUNREACH' })],
+    ['APIConnectionError by name', () => Object.assign(new Error('nope'), { name: 'APIConnectionError' })],
+    [
+      'APIConnectionTimeoutError by name',
+      () => Object.assign(new Error('timed out'), { name: 'APIConnectionTimeoutError' }),
+    ],
+    ['message-only fallback', () => new Error('Connection error.')],
+    ['fetch failed fallback', () => new Error('fetch failed')],
+  ];
+  for (const [label, make] of unreachable) {
+    it(`treats ${label} as an unreachable server`, async () => {
+      const provider = new LMStudioProvider({ model: 'x', client: fakeClient({ throws: make() }) });
+      await expect(provider.chat(messages, tools)).rejects.toThrow(/no LM Studio server reachable/);
+    });
+  }
+
+  it('does not mistake an answered request for a connection failure', async () => {
+    // A numeric status means the server replied, so however the message reads it
+    // is not a connectivity problem; misreporting it would hide a real 5xx.
+    const err = Object.assign(new Error('connection error while proxying upstream'), { status: 502 });
+    const provider = new LMStudioProvider({ model: 'x', client: fakeClient({ throws: err }) });
+    await expect(provider.chat(messages, tools)).rejects.toBe(err);
+  });
+
+  it('re-throws a 400 that is not about tools, keeping its status', async () => {
+    // Only tool/function-shaped 400s mean "model cannot do tool calling". An
+    // unrelated 400 must survive untouched for retry classification.
+    const err = Object.assign(new Error('400 context length exceeded'), { status: 400 });
+    const provider = new LMStudioProvider({ model: 'x', client: fakeClient({ throws: err }) });
+    await expect(provider.chat(messages, tools)).rejects.toBe(err);
+    expect((err as { status: number }).status).toBe(400);
+  });
+
+  it('names the discovered model in the tool-calling error, not just the endpoint', async () => {
+    // Bare `lmstudio` picks the first listed id, which may not be the model the
+    // user believes is running; blaming "the model at <endpoint>" sends them
+    // after the wrong problem.
+    const err = Object.assign(new Error('400 does not support tools'), { status: 400 });
+    const provider = new LMStudioProvider({
+      client: fakeClient({ models: ['first-model', 'second-model'], throws: err }),
+    });
+    await expect(provider.chat(messages, tools)).rejects.toThrow(/"first-model"/);
+    await expect(provider.chat(messages, tools)).rejects.toThrow(/lmstudio:<model-id>/);
+  });
+
   it('re-throws other errors untouched so the retry layer still sees the status', async () => {
     const err = Object.assign(new Error('rate limited'), { status: 429 });
     const provider = new LMStudioProvider({ model: 'x', client: fakeClient({ throws: err }) });
     await expect(provider.chat(messages, tools)).rejects.toBe(err);
     expect(isRateLimit(err)).toBe(true);
+  });
+});
+
+describe('LMStudioProvider — discovery on a multi-model server', () => {
+  it('says which model it picked and how to pin it', async () => {
+    // /v1/models reports what a server can serve, not what is loaded. Picking
+    // silently would let the board be designed by a model the user did not choose.
+    const lines: string[] = [];
+    const provider = new LMStudioProvider({
+      client: fakeClient({ models: ['alpha', 'beta', 'gamma'] }),
+    });
+    expect(await provider.resolvedModelId?.((l) => lines.push(l))).toBe('alpha');
+    const note = lines.join('\n');
+    expect(note).toContain('listed 3 models');
+    expect(note).toContain('"alpha"');
+    expect(note).toContain('lmstudio:<model-id>');
+    expect(note).toContain('2 others');
+  });
+
+  it('stays silent when the server offers exactly one model', async () => {
+    const lines: string[] = [];
+    const provider = new LMStudioProvider({ client: fakeClient({ models: ['only-one'] }) });
+    expect(await provider.resolvedModelId?.((l) => lines.push(l))).toBe('only-one');
+    expect(lines).toEqual([]);
+  });
+
+  it('stays silent when the id was pinned explicitly', async () => {
+    const lines: string[] = [];
+    const provider = new LMStudioProvider({ model: 'pinned', client: fakeClient({ models: ['a', 'b'] }) });
+    expect(await provider.resolvedModelId?.((l) => lines.push(l))).toBe('pinned');
+    expect(lines).toEqual([]);
   });
 });
 
