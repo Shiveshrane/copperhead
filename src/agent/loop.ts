@@ -263,13 +263,19 @@ async function runWithMemory(
   // it only when the env flag is set AND config.llmCache is disabled — the same
   // condition under which we skip the CachingProvider wrap below.
   const sessionResume = process.env.COPPERHEAD_CC_SESSION_RESUME === '1' && !config.llmCache;
-  let provider =
-    opts.provider ?? (await makeProvider(opts.model, sessionResume, resolveCompatSettings(config)));
+  const compatSettings = resolveCompatSettings(config);
+  let provider = opts.provider ?? (await makeProvider(opts.model, sessionResume, compatSettings));
   // Cache every turn's response so a retried/restarted stage replays what it
   // already paid for instead of re-calling the model (repo-scoped, cross-run).
   // Skip an injected provider (tests drive scripted providers directly).
   if (config.llmCache && !opts.provider) {
-    provider = new CachingProvider(provider, path.join(repoRoot, CONFIG_DIR, 'llm-cache'), log, opts.model);
+    provider = new CachingProvider(
+      provider,
+      path.join(repoRoot, CONFIG_DIR, 'llm-cache'),
+      log,
+      opts.model,
+      compatSettings.baseURL,
+    );
   }
   providers.add(provider);
   // Held separately from `provider` (which is reassigned on failover) so the

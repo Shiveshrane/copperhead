@@ -128,4 +128,30 @@ describe('CachingProvider', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it('does not share cached turns across compat endpoints with the same model id', async () => {
+    // A model id like "compat:llama-3.1-8b-instant" is not unique across hosts
+    // (Groq, OpenRouter, etc. all serve overlapping model ids), so two
+    // providers pointed at different endpoints must never replay each other's
+    // cached turns even though modelId matches.
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-cache-'));
+    try {
+      const groq = new CountingProvider(() => turn('groq answer'));
+      const openrouter = new CountingProvider(() => turn('openrouter answer'));
+      const cachedGroq = new CachingProvider(
+        groq, dir, undefined, 'compat:llama-3.1-8b-instant', 'https://api.groq.com/openai/v1',
+      );
+      const cachedOpenrouter = new CachingProvider(
+        openrouter, dir, undefined, 'compat:llama-3.1-8b-instant', 'https://openrouter.ai/api/v1',
+      );
+      const first = await cachedGroq.chat(msgs, tools);
+      const second = await cachedOpenrouter.chat(msgs, tools);
+      expect(first.text).toBe('groq answer');
+      expect(second.text).toBe('openrouter answer'); // not replayed from groq's cache entry
+      expect(groq.calls).toBe(1);
+      expect(openrouter.calls).toBe(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
