@@ -37,6 +37,31 @@ describe('secret redaction (AC-4.1)', () => {
     expect(out).toContain('[REDACTED]');
   });
 
+  it('redacts credentials embedded in a URL, keeping the host visible', () => {
+    // A self-hosted endpoint behind basic auth: copperhead prints the configured
+    // endpoint into doctor output and provider errors, so this reaches a
+    // transcript without ever looking like an API key.
+    const out = redactSecrets('endpoint http://admin:hunter2token@vllm.internal:8000/v1 refused');
+    expect(out).not.toContain('hunter2token');
+    expect(out).not.toContain('admin:');
+    // the host is the useful half of the diagnostic and must survive
+    expect(out).toContain('vllm.internal:8000/v1');
+    expect(out).toContain('http://[REDACTED]@');
+  });
+
+  it('leaves ordinary URLs and bare userinfo alone', () => {
+    // No password, so nothing secret: over-redacting the endpoint would cost the
+    // diagnostic its point.
+    for (const clean of [
+      'http://localhost:1234/v1',
+      'https://api.openai.com/v1/chat/completions',
+      'git@github.com:owner/repo.git',
+      'see https://docs.copperhead.sh/reference/configuration/',
+    ]) {
+      expect(redactSecrets(clean), clean).toBe(clean);
+    }
+  });
+
   it('redacts registry and forge tokens, not just model keys', () => {
     // Synthetic tokens: correct shape, never valid.
     const input = [
