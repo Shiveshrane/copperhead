@@ -350,6 +350,24 @@ describe('doctor — OpenAI-compatible endpoints (issue #110)', () => {
     expect(c?.detail).toMatch(/cannot verify/i);
   });
 
+  it('OpenRouter: warns only for a :free-suffixed model, not a paid one (regression)', () => {
+    // Bug: matching only on host meant a fully paid OpenRouter model got the
+    // exact same warning as a free one, contradicting the warning's own text
+    // ("OpenRouter `:free` models may route to providers that train on prompts").
+    const openrouter = { baseURL: 'https://openrouter.ai/api/v1', apiKeyEnv: 'OPENROUTER_API_KEY' };
+
+    const free = checkPromptPrivacy('compat:some-vendor/some-model:free', openrouter);
+    expect(free?.status).toBe('warn');
+    expect(free?.detail).toMatch(/train/i);
+
+    const paid = checkPromptPrivacy('compat:anthropic/claude-3.5-sonnet', openrouter);
+    expect(paid?.status).toBe('info');
+    expect(paid?.detail).toMatch(/cannot verify/i);
+    // The info message legitimately says "training-on-prompts policy" too;
+    // what must NOT appear is the actual risk description text.
+    expect(paid?.detail).not.toMatch(/may route to providers/i);
+  });
+
   it('the privacy check does not apply to non-compat models', () => {
     expect(checkPromptPrivacy('gpt-5', groq)).toBeNull();
     expect(checkPromptPrivacy('claude', groq)).toBeNull();

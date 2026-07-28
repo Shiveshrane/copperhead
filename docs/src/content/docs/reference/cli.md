@@ -136,7 +136,7 @@ Checks, in order:
 - **kicad-cli** — present on PATH (a missing binary is reported, not thrown).
 - **git** — present on PATH (copperhead snapshots and commits its work).
 - **provider** — resolves the model the same way a run does (`--model` > `COPPERHEAD_MODEL` > config > available key) and checks its credential. Saved-login providers (`codex`, `cursor`, `claude-code`) need no key and report `info`. For `compat:<id>` it checks the variable named by `apiKeyEnv`; a local endpoint needs no key.
-- **privacy** — `compat` only. Warns when the endpoint's host is documented as training on submitted prompts. A `[warn]` never fails the check.
+- **privacy** — `compat` only. `[warn]` when the endpoint's host is documented as training on submitted prompts; `[info]` naming the host when a remote endpoint has no known policy on record. Neither ever fails the check. A true loopback endpoint (`localhost`/`127.0.0.1`/`::1`) skips this line entirely; a `.local`/LAN host does not, since that traffic still leaves the machine.
 - **project** — informational: whether `.copperhead/config.json` exists and what it wires. Never blocks.
 
 | Option | Description |

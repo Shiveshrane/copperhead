@@ -35,4 +35,4 @@
 ## 6. Docs
 
 - [x] 6.1 `.env.example`, README model list, `docs/reference/cli.md`, `docs/reference/configuration.md`.
-- [x] 6.2 SPEC.md provider list, AC-3.10 parity note, and new AC-3.13–3.16 (credential, locality, routing, endpoint-isolation — one per delta-spec requirement).
+- [x] 6.2 SPEC.md provider list, AC-3.10 parity note, and new AC-3.13–3.17 (credential, locality, routing, endpoint-isolation, prompt-privacy — one per delta-spec requirement).

@@ -456,6 +456,7 @@ Format: Given / When / Then. "Fixture" = the open-telegraph repo (or the tiny te
 - **AC-3.14 (compat locality)** A `baseURL` resolving to a loopback host (`localhost`, `127.0.0.1`, `::1`, or a `.local` suffix) requires no credential; a remote `baseURL` without its configured credential fails before any network call, naming the missing variable in the error.
 - **AC-3.15 (compat routing is explicit)** Bare `compat` (no model id) and `compat:` (empty model id) are both rejected with an actionable message naming `compat:<model-id>`; a compatible endpoint has no default model to fall back to, unlike `codex`/`claude-code`/`cursor`.
 - **AC-3.16 (compat endpoint isolation)** An exported `COPPERHEAD_BASE_URL`/`COPPERHEAD_API_KEY_ENV` does not change where a non-`compat` model (`gpt-5`, `claude`, etc.) sends its requests; only the explicit `compat:` prefix consults them.
+- **AC-3.17 (compat prompt-privacy signal)** `doctor` reports a non-blocking `warn` line when the compat endpoint's host is documented as training on submitted prompts, and a non-blocking `info` line naming the host when no policy is on record; neither case fails the command. A true loopback endpoint (`localhost`, `127.0.0.1`, or `::1`, but not a `.local`/LAN host) bypasses this check entirely, since nothing leaves the machine.
 
 ### AC-4 · Safety
 

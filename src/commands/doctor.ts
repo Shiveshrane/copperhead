@@ -204,13 +204,20 @@ export function checkPromptPrivacy(model: string, compat?: CompatSettings | unde
   } catch {
     return null;
   }
+  const noPolicyOnRecord = (): DoctorCheck => ({
+    name: 'privacy',
+    status: 'info',
+    detail: `${host}: no known training-on-prompts policy on record (copperhead cannot verify this; check the provider's terms)`,
+  });
   const risk = Object.entries(TRAINING_RISK_HOSTS).find(([h]) => host === h || host.endsWith(`.${h}`));
-  if (!risk) {
-    return {
-      name: 'privacy',
-      status: 'info',
-      detail: `${host}: no known training-on-prompts policy on record (copperhead cannot verify this; check the provider's terms)`,
-    };
+  if (!risk) return noPolicyOnRecord();
+  // OpenRouter's documented risk is specific to its `:free`-suffixed models
+  // (their own wording), not the host as a whole. Warning on a fully paid
+  // OpenRouter model would be a false positive that undermines trust in the
+  // other, host-wide warnings (Gemini's applies to its whole free tier).
+  if (risk[0] === 'openrouter.ai') {
+    const compatModel = model.startsWith('compat:') ? model.slice('compat:'.length) : '';
+    if (!compatModel.endsWith(':free')) return noPolicyOnRecord();
   }
   return {
     name: 'privacy',

@@ -26,9 +26,14 @@
 - **THEN** the provider check passes and its detail names `GROQ_API_KEY` and the resolved endpoint
 
 ### Requirement: `doctor` warns about prompt-training risk without failing
-`copperhead doctor` SHALL emit a `warn`-level line when the configured endpoint's host is one documented as training on submitted prompts, and SHALL NOT fail the run for that reason alone. For a host with no policy on record it SHALL say so explicitly rather than implying the endpoint is safe.
+`copperhead doctor` SHALL emit a `warn`-level line when the configured endpoint's host is one documented as training on submitted prompts, and SHALL NOT fail the run for that reason alone. For a host with no policy on record it SHALL say so explicitly rather than implying the endpoint is safe. A true loopback endpoint (`localhost`, `127.0.0.1`, `::1`) SHALL bypass this check entirely; a `.local`/LAN host SHALL NOT, since that traffic leaves the machine.
 
 #### Scenario: a training-risk host warns without failing
 - **GIVEN** the configured endpoint's host is documented as training on free-tier prompts
 - **WHEN** `copperhead doctor --model compat:<model-id>` runs with the credential present
 - **THEN** a `warn` line reports the risk and the command still exits 0
+
+#### Scenario: a true loopback endpoint skips the privacy check entirely
+- **GIVEN** the configured endpoint is `localhost`, `127.0.0.1`, or `::1`
+- **WHEN** `copperhead doctor --model compat:<model-id>` runs
+- **THEN** no privacy line is reported at all — a `.local`/LAN host at the same command still gets the `warn`/`info` treatment above, since it is not true loopback
