@@ -88,7 +88,7 @@ describe('sexp parser', () => {
         )
         (wire
           (pts
-            (xy 10 10)
+            (xy 10 6.19)
             (xy 10 10)
           )
         )
@@ -109,6 +109,60 @@ describe('sexp parser', () => {
       const pins = await pinNets(customSch);
       const r1Pins = pins.filter((p) => p.ref === 'R1');
       expect(r1Pins.find((p) => p.pinNumber === '1')?.net).toBe('GND');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('treats legacy power: prefix symbols as power symbols (not real components)', async () => {
+    const { repo, cleanup } = await tempFixtureRepo();
+    try {
+      const legacySch = path.join(repo, 'legacy.kicad_sch');
+      const content = `(kicad_sch
+        (version 20231120)
+        (uuid "1a1a1a1a-0000-4000-8000-000000000001")
+        (lib_symbols
+          (symbol "power:GND"
+            (pin power_in line (at 0 0 0) (length 0) hide
+              (name "GND" (effects (font (size 1.27 1.27))))
+              (number "1" (effects (font (size 1.27 1.27))))
+            )
+          )
+          (symbol "Device:C"
+            (property "Reference" "C" (at 0 0 0) (effects (font (size 1.27 1.27))))
+            (property "Value" "100n" (at 0 0 0) (effects (font (size 1.27 1.27))))
+            (property "Footprint" "" (at 0 0 0) (effects (font (size 1.27 1.27)) hide))
+            (pin passive line (at 0 3.81 270) (length 1.27)
+              (name "~" (effects (font (size 1.27 1.27))))
+              (number "1" (effects (font (size 1.27 1.27))))
+            )
+          )
+        )
+        (symbol
+          (lib_id "power:GND")
+          (at 10 5 0)
+          (uuid "1d1d1d1d-0000-4000-8000-000000000001")
+          (property "Reference" "#PWR1" (at 10 5 0) (effects (font (size 1.27 1.27)) hide))
+          (property "Value" "GND" (at 10 5 0) (effects (font (size 1.27 1.27))))
+          (pin "1" (uuid "1e1e1e1e-0000-4000-8000-000000000001"))
+        )
+        (symbol
+          (lib_id "Device:C")
+          (at 10 10 0)
+          (uuid "1d1d1d1d-0000-4000-8000-000000000002")
+          (property "Reference" "C1" (at 10 10 0) (effects (font (size 1.27 1.27))))
+          (property "Value" "100n" (at 10 10 0) (effects (font (size 1.27 1.27))))
+          (property "Footprint" "Capacitor_SMD:C_0402_1005Metric" (at 10 10 0) (effects (font (size 1.27 1.27)) hide))
+          (pin "1" (uuid "1e1e1e1e-0000-4000-8000-000000000002"))
+        )
+      )`;
+
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(legacySch, content, 'utf8');
+
+      // power:GND must be excluded; only Device:C (C1) is a real component
+      const syms = await listSymbols(legacySch);
+      expect(syms.map((s) => s.ref)).toEqual(['C1']);
     } finally {
       await cleanup();
     }

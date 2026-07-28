@@ -231,7 +231,8 @@ function collectPowerSymbols(sheets: ParsedSheet[]): Set<string> {
     if (!libs) continue;
     for (const sym of children(libs, 'symbol')) {
       const name = atomAt(sym, 1);
-      if (name && child(sym, 'power') !== undefined) {
+      const p = child(sym, 'power');
+      if (name && p !== undefined && atomAt(p, 1) !== 'no') {
         set.add(name);
       }
     }
