@@ -55,22 +55,93 @@ async function docHasHeading(repoRoot: string, rel: string, word: string): Promi
   return re.test(await readFile(p, 'utf8'));
 }
 
+/**
+ * Returns true when a directory exists and contains at least one file
+ * matching the optional glob-style extension list (case-insensitive).
+ * No extension list = any file.
+ */
+async function dirHasFiles(dirPath: string, exts?: string[]): Promise<boolean> {
+  if (!existsSync(dirPath)) return false;
+  const { readdir: rd } = await import('node:fs/promises');
+  async function walk(dir: string): Promise<boolean> {
+    for (const entry of await rd(dir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (await walk(path.join(dir, entry.name))) return true;
+      } else if (!exts || exts.some((e) => entry.name.toLowerCase().endsWith(e))) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return walk(dirPath);
+}
+
 export const STAGES: Stage[] = [
   {
     name: 'spec-seed',
-    isComplete: (root, docs) => docHasHeading(root, path.join(docs, 'SPEC.md'), 'Budgets?'),
+    isComplete: async (root, docs) => {
+      // The init scaffold writes SPEC.md with a "## Budgets" heading and an
+      // HTML comment placeholder — that alone must not count as complete.
+      // Require the heading AND at least one non-comment, non-blank line
+      // of real budget content beneath it (a filled section vs. an empty placeholder).
+      const p = path.join(root, docs, 'SPEC.md');
+      if (!existsSync(p)) return false;
+      const text = await readFile(p, 'utf8');
+      const budgetsMatch = /^#{1,6}\s.*\bBudgets?\b/im.test(text);
+      if (!budgetsMatch) return false;
+      // Find the Budgets section and check for real content (non-comment, non-blank lines)
+      const afterBudgets = text.split(/^#{1,6}\s.*\bBudgets?\b/im)[1] ?? '';
+      const nextSection = afterBudgets.search(/^#{1,6}\s/m);
+      const section = nextSection >= 0 ? afterBudgets.slice(0, nextSection) : afterBudgets;
+      const realLines = section.split('\n').filter(
+        (l) => l.trim() && !l.trim().startsWith('<!--') && !l.trim().startsWith('-->'),
+      );
+      return realLines.length > 0;
+    },
     prompt: (brief) =>
       `Stage 1 of the create pipeline: seed the requirements. From the product brief below, write docs/SPEC.md (what the device is, top-level constraints and budgets). Every budget you state must also be recorded with record_constraint. Anything the brief does not state: propose a sensible default and flag it ASSUMED. If an openspec/ workspace exists, also seed openspec/specs/ with per-capability requirements using Given/When/Then scenarios.\n\nBrief:\n${brief}`,
   },
   {
     name: 'architecture',
-    isComplete: (root, docs) => docExists(root, path.join(docs, 'SUBSYSTEMS.md')),
+    isComplete: async (root, docs) => {
+      // init scaffolds SUBSYSTEMS.md with a "## Sheet X" heading auto-generated
+      // from existing symbols. Require at least one ## section with a non-empty
+      // content line beneath it (a filled section means real architecture work).
+      const p = path.join(root, docs, 'SUBSYSTEMS.md');
+      if (!existsSync(p)) return false;
+      const text = await readFile(p, 'utf8');
+      // Must have at least one ## section
+      if (!/^#{1,6}\s/m.test(text)) return false;
+      // Must have at least one non-blank, non-heading line (real content)
+      const contentLines = text.split('\n').filter(
+        (l) => l.trim() && !l.trim().startsWith('#'),
+      );
+      return contentLines.length > 0;
+    },
     prompt: () =>
       'Stage 2: architecture. Write docs/SUBSYSTEMS.md: the block diagram in prose, one section per subsystem (power, MCU, connectivity, UI, ...), with the reasoning and key values for each. Respect every budget in SPEC.md.',
   },
   {
     name: 'part-selection',
-    isComplete: (root, docs) => docExists(root, path.join(docs, 'BOM.md')),
+    isComplete: async (root, docs) => {
+      // init scaffolds BOM.md with a table pre-filled with UNVERIFIED MPNs
+      // extracted from the schematic. Require at least one row whose MPN
+      // column is NOT the UNVERIFIED placeholder — i.e. a real part was chosen.
+      const p = path.join(root, docs, 'BOM.md');
+      if (!existsSync(p)) return false;
+      const text = await readFile(p, 'utf8');
+      // Find table rows (lines starting with |) that are not the header or separator
+      const rows = text.split('\n').filter(
+        (l) => l.startsWith('|') && !l.includes('---') && !l.toLowerCase().includes('refdes'),
+      );
+      if (!rows.length) return false;
+      // At least one row must have a non-UNVERIFIED MPN (4th column)
+      return rows.some((row) => {
+        const cols = row.split('|').map((c) => c.trim());
+        const mpn = cols[4] ?? ''; // 0=empty, 1=Refdes, 2=Value, 3=Footprint, 4=MPN
+        return mpn && mpn.toUpperCase() !== 'UNVERIFIED' && !mpn.toUpperCase().startsWith('UNVERIFIED');
+      });
+    },
     prompt: () =>
       'Stage 3: part selection. Write docs/BOM.md with the fixed table format (| Refdes | Value | Footprint | MPN | Rationale |). Every MPN you introduce is flagged UNVERIFIED with a datasheet-verifiable justification. Check leakage/quiescent current of every part against the power budget. Run check_drift before finishing.',
   },
@@ -122,19 +193,37 @@ export const STAGES: Stage[] = [
   },
   {
     name: 'outputs',
-    isComplete: (root) => existsSync(path.join(root, 'outputs')),
+    isComplete: async (root) => {
+      // An empty outputs/ dir (e.g. from a failed export run) must not count
+      // as complete. Require at least one Gerber file (any .gbr variant).
+      return dirHasFiles(path.join(root, 'outputs'), ['.gbr', '.gtl', '.gbl', '.gbs', '.gbo', '.gbp', '.gbd']);
+    },
     prompt: () =>
       'Stage 6: outputs package. Export into outputs/: gerbers+drill (JLC profile), DXF and STEP outline, SVG renders (export_svg), and an ordering BOM.csv generated from BOM.md (refdes, MPN, qty). Every export must succeed.',
   },
   {
     name: 'firmware',
-    isComplete: (root) => existsSync(path.join(root, 'firmware')),
+    isComplete: async (root) => {
+      // An empty firmware/ dir must not count. Require at least one source file.
+      return dirHasFiles(path.join(root, 'firmware'), ['.c', '.h', '.cpp', '.py', '.rs', '.ino']);
+    },
     prompt: () =>
       'Stage 7: firmware scaffold. Generate firmware/ for the chosen MCU HAL: pins.h generated from PINOUT.md (single source of truth), driver stubs, and one working happy path. If the vendor toolchain is available, the build must pass; if not, note "not compiled here" explicitly in DEVPLAN.md.',
   },
   {
     name: 'devplan',
-    isComplete: (root, docs) => docExists(root, path.join(docs, 'DEVPLAN.md')),
+    isComplete: async (root, docs) => {
+      // init does NOT scaffold DEVPLAN.md, but a blank file must not count.
+      // Require at least one ## section heading AND at least one content line.
+      const p = path.join(root, docs, 'DEVPLAN.md');
+      if (!existsSync(p)) return false;
+      const text = await readFile(p, 'utf8');
+      if (!/^#{1,6}\s/m.test(text)) return false;
+      const contentLines = text.split('\n').filter(
+        (l) => l.trim() && !l.trim().startsWith('#'),
+      );
+      return contentLines.length > 0;
+    },
     prompt: () =>
       'Stage 8: DEVPLAN.md. Write docs/DEVPLAN.md: bring-up steps in order, test points and what to meter first, risk list, and the prototype order plan.',
   },
