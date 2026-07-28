@@ -29,6 +29,14 @@ It reads and edits real `.kicad_sch` / `.kicad_pcb` files (s-expression text), m
 
 ## Install
 
+> [!TIP]
+> **Most users should not install copperhead by hand.** If you are working inside an AI coding assistant (like Claude Code, Cursor, or Codex), you can install and configure copperhead automatically for your repository by pasting this single line:
+> ```text
+> Install copperhead for this repo using https://raw.githubusercontent.com/chouhanindustries/copperhead/main/agent-install-prompt.md
+> ```
+
+If you prefer to install manually:
+
 ```bash
 npm install -g copperhead   # or: npx copperhead check
 ```
@@ -56,8 +64,12 @@ The script is conservative by design: it never runs `sudo` and never edits shell
 In an existing KiCad repository:
 
 ```bash
-export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY
+export ANTHROPIC_API_KEY=...   # or OPENAI_API_KEY; optional: with no key, `copperhead` offers a model picker
 copperhead init                # scaffold docs/ from the schematic; idempotent
+copperhead                     # interactive agent shell (Claude Code–style REPL)
+copperhead demo --tour          # what the agent does (no LLM)
+copperhead demo --model cursor # full USB-C breakout create pipeline
+# or one-shot:
 copperhead do "add reverse-polarity protection on VIN"
 copperhead check               # ERC + DRC + doc drift; no LLM, CI-safe
 ```
