@@ -1,3 +1,4 @@
+import { DEFAULT_API_KEY_ENV, isLocalEndpoint } from '../../config.js';
 import type { ChatOpts, Msg, Provider, ToolSchema, Turn, ToolCall } from '../types.js';
 
 /** The slice of an OpenAI-compatible chat completion this provider reads. */
@@ -33,6 +34,8 @@ export interface OpenAIProviderOptions {
   model?: string;
   /** Defaults to `OPENAI_API_KEY`. Must be non-empty. */
   apiKey?: string;
+  /** Named environment variable from which a compatible endpoint reads its key. */
+  apiKeyEnv?: string;
   /** Override the API host. Omitted for the real OpenAI API; set by subclasses
    *  that talk to an OpenAI-compatible server (see `lmstudio.ts`). */
   baseURL?: string;
@@ -45,7 +48,7 @@ export class OpenAIProvider implements Provider {
   // Widened to `string` so a subclass can narrow it to its own provider name.
   // The name is load-bearing: `otherProvider` in loop.ts only fails over between
   // 'openai' and 'anthropic', so any other name is structurally no-fallback.
-  readonly name: string = 'openai';
+  readonly name: string;
 
   protected readonly model: string | undefined;
   protected readonly apiKey: string | undefined;
@@ -54,14 +57,21 @@ export class OpenAIProvider implements Provider {
   /** Memoized so a run builds one client instead of one per turn. */
   private clientPromise: Promise<ChatClientLike> | undefined;
 
-  constructor(opts: OpenAIProviderOptions = {}) {
+  constructor(
+    modelOrOpts: string | OpenAIProviderOptions = {},
+    positionalOpts: OpenAIProviderOptions = {},
+    env: NodeJS.ProcessEnv = process.env,
+  ) {
+    const opts = typeof modelOrOpts === 'string' ? { ...positionalOpts, model: modelOrOpts } : modelOrOpts;
     this.model = opts.model;
-    this.apiKey = opts.apiKey ?? process.env.OPENAI_API_KEY;
+    const keyEnv = opts.apiKeyEnv ?? DEFAULT_API_KEY_ENV;
+    this.apiKey = opts.apiKey ?? env[keyEnv];
     this.baseURL = opts.baseURL;
     this.injectedClient = opts.client;
+    this.name = this.baseURL ? 'openai-compat' : 'openai';
     // Subclasses that authenticate differently satisfy this by passing their own
     // non-empty placeholder (the SDK requires a string), never a cloud key.
-    if (!this.apiKey) throw new Error('OPENAI_API_KEY is not set');
+    if (!this.apiKey && !isLocalEndpoint(this.baseURL)) throw new Error(`${keyEnv} is not set`);
   }
 
   protected async client(): Promise<ChatClientLike> {
@@ -70,7 +80,7 @@ export class OpenAIProvider implements Provider {
       this.clientPromise = (async () => {
         const { default: OpenAI } = await import('openai');
         return new OpenAI({
-          apiKey: this.apiKey,
+          apiKey: this.apiKey ?? 'no-key-required',
           ...(this.baseURL ? { baseURL: this.baseURL } : {}),
         }) as unknown as ChatClientLike;
       })();

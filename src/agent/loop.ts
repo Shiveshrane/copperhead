@@ -7,7 +7,15 @@ import { CachingProvider } from './response-cache.js';
 import { withTimeout, TurnTimeoutError } from './recovery.js';
 import { buildSystemPrompt } from './prompts.js';
 import { loadConstraints, reopenDeferredAffects } from '../memory/constraints.js';
-import { loadConfig, CONFIG_DIR, type CopperheadConfig } from '../config.js';
+import {
+  loadConfig,
+  CONFIG_DIR,
+  DEFAULT_API_KEY_ENV,
+  resolveCompatSettings,
+  isCompatModel,
+  type CompatSettings,
+  type CopperheadConfig,
+} from '../config.js';
 import { Transcript, type ExitPath, type RunStats } from './transcript.js';
 import { collectRunMeta, renderCliHeader, type RunMeta, type RunMetaInput } from './runmeta.js';
 import { plainRenderer, fmtDuration, fmtTokens, type ProgressRenderer } from './render.js';
@@ -75,7 +83,21 @@ export interface RunResult {
   cacheHits: number;
 }
 
-export async function makeProvider(model: string, sessionResume = false): Promise<Provider> {
+export async function makeProvider(model: string, sessionResume = false, compat?: CompatSettings): Promise<Provider> {
+  if (isCompatModel(model)) {
+    const compatModel = model.startsWith('compat:') ? model.slice('compat:'.length) : undefined;
+    if (compatModel === '') throw new Error('compat model override cannot be empty; use "compat:<model-id>"');
+    const settings = compat ?? { apiKeyEnv: DEFAULT_API_KEY_ENV };
+    if (!compatModel) {
+      throw new Error(settings.baseURL
+        ? `compat requires a model id; use "compat:<model-id>" (endpoint ${settings.baseURL} is configured, but has no default model)`
+        : 'compat requires a model id and an endpoint; use "compat:<model-id>" and set baseURL (COPPERHEAD_BASE_URL or .copperhead/config.json)');
+    }
+    if (!settings.baseURL) {
+      throw new Error(`compat:${compatModel} requires an endpoint; set baseURL (COPPERHEAD_BASE_URL or "baseURL" in .copperhead/config.json) — without one this would silently fall back to the real OpenAI API.`);
+    }
+    return new OpenAIProvider({ model: compatModel, baseURL: settings.baseURL, apiKeyEnv: settings.apiKeyEnv });
+  }
   if (model === 'codex' || model.startsWith('codex:')) {
     const codexModel = model.startsWith('codex:') ? model.slice('codex:'.length) : undefined;
     if (codexModel === '') throw new Error('codex model override cannot be empty; use "codex" or "codex:<model-id>"');
@@ -231,7 +253,8 @@ async function runWithMemory(
   // it only when the env flag is set AND config.llmCache is disabled — the same
   // condition under which we skip the CachingProvider wrap below.
   const sessionResume = process.env.COPPERHEAD_CC_SESSION_RESUME === '1' && !config.llmCache;
-  let provider = opts.provider ?? (await makeProvider(opts.model, sessionResume));
+  const compatSettings = resolveCompatSettings(config);
+  let provider = opts.provider ?? (await makeProvider(opts.model, sessionResume, compatSettings));
   // When the routing string does not name the model (`--model lmstudio` uses
   // whichever model the local server has loaded), ask the provider what it will
   // actually use. Both surfaces below are built once, up front, so without this
@@ -273,7 +296,13 @@ async function runWithMemory(
   // reasoning as another's.
   const cacheKeyIsReal = !provider.resolvedModelId || probedModel !== undefined;
   if (config.llmCache && !opts.provider && cacheKeyIsReal) {
-    provider = new CachingProvider(provider, path.join(repoRoot, CONFIG_DIR, 'llm-cache'), log, effectiveModel);
+    provider = new CachingProvider(
+      provider,
+      path.join(repoRoot, CONFIG_DIR, 'llm-cache'),
+      log,
+      effectiveModel,
+      isCompatModel(opts.model) ? compatSettings.baseURL : undefined,
+    );
   }
   providers.add(provider);
   // Held separately from `provider` (which is reassigned on failover) so the

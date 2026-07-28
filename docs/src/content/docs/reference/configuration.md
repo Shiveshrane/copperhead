@@ -65,6 +65,8 @@ The constraint registry: machine-readable counterparts to the constraints stated
 | `COPPERHEAD_CODEX_PATH` | Optional path to a `codex` executable. Defaults to `codex` on `PATH`; the SDK-bundled launcher is a fallback. |
 | `COPPERHEAD_CURSOR_PATH` | Optional path to the Cursor Agent CLI (`agent` / `cursor-agent`). Defaults to `agent` on `PATH`. |
 | `LMSTUDIO_BASE_URL` | Optional. Where the LM Studio server listens for `--model lmstudio` (see below). Defaults to `http://localhost:1234/v1`. No key involved. |
+| `COPPERHEAD_BASE_URL` | Optional. OpenAI-compatible endpoint for the explicit `compat:<id>` route only. |
+| `COPPERHEAD_API_KEY_ENV` | Optional. Name of the environment variable holding that endpoint's key. |
 | `NO_COLOR` | Optional. Disables ANSI colors in `doctor` output; colors are also skipped automatically when stdout is not a terminal. |
 | `SYNAP_API_KEY` | Optional. Enables cross-run memory. Absent, copperhead behaves exactly as before and makes no Synap calls. |
 | `SYNAP_USER_ID` | Optional memory scope. Defaults to your `git config user.email`. |
@@ -102,10 +104,13 @@ Accepted model values (routing is by prefix; `makeProvider` checks `codex`, then
 | `claude-code` / `claude-code:<id>` | Claude Code, saved login | none (uses `CLAUDE_CODE_OAUTH_TOKEN` / your logged-in CLI) |
 | `cursor` / `cursor:<id>` | Cursor Agent CLI, saved login | none (`agent login`) |
 | `lmstudio` / `lmstudio:<id>` | Local LM Studio server | none (a placeholder is sent, never a cloud key) |
+| `compat:<id>` | Any OpenAI-compatible endpoint (Groq, OpenRouter, Gemini, Ollama) | the variable named by `apiKeyEnv`; none for loopback |
 | `claude` / `claude-<id>` | Anthropic API | `ANTHROPIC_API_KEY` |
 | `gpt-5` / anything else | OpenAI API | `OPENAI_API_KEY` |
 
 `claude-code` is matched before the `claude` prefix, so it is never captured by the Anthropic API route. `lmstudio` is matched before the catch-all OpenAI route, so it is never sent to `api.openai.com`. Cursor runs report 0 token usage (CLI JSON has no usage fields).
+
+For `compat:<id>`, set `baseURL` and `apiKeyEnv` in `.copperhead/config.json`, or set `COPPERHEAD_BASE_URL` and `COPPERHEAD_API_KEY_ENV`. This endpoint configuration is read only by the explicit `compat:` route, so it cannot redirect a `gpt-5` run. A loopback endpoint needs no key.
 
 ### Saved login (Claude Code)
 

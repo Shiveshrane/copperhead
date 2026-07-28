@@ -40,6 +40,12 @@ const providers: { model: string; key: string | undefined }[] = [
     model: process.env.COPPERHEAD_TEST_LMSTUDIO_MODEL ?? 'lmstudio',
     key: process.env.COPPERHEAD_TEST_LMSTUDIO === '1' ? 'local-lmstudio-server' : undefined,
   },
+  {
+    model: process.env.COPPERHEAD_TEST_COMPAT_MODEL ?? 'compat',
+    key: process.env.COPPERHEAD_TEST_COMPAT_MODEL && process.env.COPPERHEAD_BASE_URL
+      ? (process.env[process.env.COPPERHEAD_API_KEY_ENV ?? 'OPENAI_API_KEY'] ?? 'local-endpoint-no-key')
+      : undefined,
+  },
 ];
 
 function claudeCodeSdkInstalled(): boolean {
