@@ -130,10 +130,21 @@ export function checkCredential(
     }
     const settings = compat ?? { apiKeyEnv: DEFAULT_API_KEY_ENV };
     // Display only: some endpoints embed a credential in the URL itself (a
-    // query param, userinfo). Redact before it reaches the report, same
-    // policy as the model value just above (AC-4.1). isLocalEndpoint() below
-    // still runs against the raw settings.baseURL, never this.
-    const where = redactSecrets(settings.baseURL ?? '(no baseURL configured)');
+    // query param, userinfo) — Gemini's compat endpoint does this with
+    // ?key=..., in a format redactSecrets' key-shape patterns don't cover.
+    // Drop the query and userinfo entirely rather than pattern-matching, so
+    // this holds regardless of what a given provider's key looks like.
+    // isLocalEndpoint() below still runs against the raw settings.baseURL,
+    // never this.
+    const where = (() => {
+      if (!settings.baseURL) return '(no baseURL configured)';
+      try {
+        const u = new URL(settings.baseURL);
+        return `${u.origin}${u.pathname}`;
+      } catch {
+        return redactSecrets(settings.baseURL);
+      }
+    })();
     if (!settings.baseURL) {
       return {
         name: 'provider',

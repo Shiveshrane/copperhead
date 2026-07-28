@@ -10,7 +10,7 @@ export interface OpenAIProviderOptions {
 }
 
 export class OpenAIProvider implements Provider {
-  readonly name = 'openai';
+  readonly name: string;
   private readonly apiKey: string | undefined;
   private readonly baseURL: string | undefined;
 
@@ -25,6 +25,11 @@ export class OpenAIProvider implements Provider {
     // fake values through the `env` argument, not through opts.
     const keyEnv = opts.apiKeyEnv ?? DEFAULT_API_KEY_ENV;
     this.baseURL = opts.baseURL;
+    // A compat endpoint must be structurally ineligible for the paid
+    // OpenAI/Anthropic failover in otherProvider() (loop.ts) — it is not
+    // OpenAI, and a rate limit there must never silently redirect a run the
+    // user deliberately pointed elsewhere to someone else's paid API.
+    this.name = this.baseURL ? 'openai-compat' : 'openai';
     this.apiKey = env[keyEnv];
     // A loopback endpoint (Ollama) serves the same API with no credential, and
     // it is the one backend that is both free and fully local — requiring a

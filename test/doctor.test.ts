@@ -204,6 +204,18 @@ describe('copperhead doctor', () => {
     expect(stripped).toEqual(plain);
   });
 
+  it('formatDoctor renders a warn tag distinctly from ok/fail/info', () => {
+    const report = {
+      ok: true,
+      checks: [{ name: 'privacy', status: 'warn' as const, detail: 'may train on submitted prompts' }],
+    };
+    const plain = formatDoctor(report, 80);
+    expect(plain.join('\n')).toContain('[warn]');
+    const colored = formatDoctor(report, 80, true);
+    // eslint-disable-next-line no-control-regex
+    expect(colored.join('\n')).toContain('[33m'); // yellow warn tag
+  });
+
   it('reports a missing git as a failure with an install hint (does not throw)', async () => {
     const { repo, cleanup } = await tempFixtureRepo();
     try {
@@ -296,20 +308,45 @@ describe('doctor — OpenAI-compatible endpoints (issue #110)', () => {
     expect(bad.hint).toContain('GROQ_API_KEY');
   });
 
-  it('redacts a credential embedded in the endpoint URL from the displayed report', () => {
+  it('strips a credential embedded in the endpoint URL from the displayed report', () => {
     const leaky = { baseURL: 'https://api.example.com/v1?key=sk-shouldnotleak123', apiKeyEnv: 'X_API_KEY' };
     const c = checkCredential('compat:model', { X_API_KEY: 'x' }, leaky);
     expect(c.status).toBe('ok');
     expect(c.detail).not.toContain('sk-shouldnotleak123');
-    expect(c.detail).toContain('[REDACTED]');
     // The rest of the URL still shows, so the endpoint is still diagnosable.
     expect(c.detail).toContain('api.example.com');
+  });
+
+  it('strips a Gemini-shaped key (AIza..., not sk-...) from the endpoint URL — regression', () => {
+    // redactSecrets' key-shape patterns (sk-, Bearer, npm_, gh*_) don't match
+    // Gemini's AIza... format or Groq's gsk_... format, and Gemini's own
+    // compat endpoint puts the key in the URL as ?key=.... Dropping the whole
+    // query/userinfo (not pattern-matching the key) is what makes this hold
+    // for every provider's key shape, not just the ones tested here.
+    const gemini = {
+      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai?key=AIzaSyABCDEF1234567890shouldnotleak',
+      apiKeyEnv: 'GEMINI_API_KEY',
+    };
+    const c = checkCredential('compat:gemini-2.5-flash', { GEMINI_API_KEY: 'x' }, gemini);
+    expect(c.status).toBe('ok');
+    expect(c.detail).not.toContain('AIzaSyABCDEF1234567890shouldnotleak');
+    expect(c.detail).not.toContain('key=');
+    expect(c.detail).toContain('generativelanguage.googleapis.com');
   });
 
   it('a local endpoint passes with no key (D4)', () => {
     const c = checkCredential('compat:llama3', {}, { baseURL: 'http://localhost:11434/v1', apiKeyEnv: 'UNUSED' });
     expect(c.status).toBe('ok');
     expect(c.detail).toContain('no key required');
+  });
+
+  it('falls back to DEFAULT_API_KEY_ENV when no compat settings are passed at all', () => {
+    // Every production caller resolves settings via resolveCompatSettings()
+    // first, so this default arm (`compat ?? { apiKeyEnv: DEFAULT_API_KEY_ENV }`)
+    // only exercises when a caller omits the third argument entirely.
+    const c = checkCredential('compat:model', { OPENAI_API_KEY: 'x' });
+    expect(c.status).toBe('fail'); // no baseURL configured either way
+    expect(c.detail).toContain('no endpoint configured');
   });
 
   it('compat with no endpoint configured fails with an actionable hint', () => {
@@ -388,6 +425,22 @@ describe('doctor — OpenAI-compatible endpoints (issue #110)', () => {
     expect(c).not.toBeNull();
     expect(c?.status).toBe('info');
     expect(c?.detail).toContain('nas.local');
+  });
+
+  it('an unparseable baseURL reports no privacy line rather than a wrong one', () => {
+    // Exercises both the loopback check's catch (an unparseable URL is not
+    // loopback) and checkPromptPrivacy's own catch on the same string: the
+    // safe outcome is silence, not a false bypass or a thrown error.
+    expect(checkPromptPrivacy('compat:phi3', { baseURL: 'not a url', apiKeyEnv: 'UNUSED' })).toBeNull();
+  });
+
+  it('matches a training-risk host on a subdomain, not just the exact host', () => {
+    const c = checkPromptPrivacy('compat:gemini-2.0-flash', {
+      baseURL: 'https://region-a.generativelanguage.googleapis.com/v1beta/openai',
+      apiKeyEnv: 'GEMINI_API_KEY',
+    });
+    expect(c?.status).toBe('warn');
+    expect(c?.detail).toMatch(/train/i);
   });
 
   it('a training-risk warning still leaves the report ready (exit 0)', async () => {

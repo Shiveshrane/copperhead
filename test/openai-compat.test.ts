@@ -4,7 +4,8 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { makeProvider } from '../src/agent/loop.js';
+import { execa } from 'execa';
+import { makeProvider, runAgentLoop } from '../src/agent/loop.js';
 import { OpenAIProvider } from '../src/agent/providers/openai.js';
 import {
   DEFAULT_API_KEY_ENV,
@@ -14,6 +15,7 @@ import {
   type CopperheadConfig,
   DEFAULTS,
 } from '../src/config.js';
+import { tempFixtureRepo } from './helpers.js';
 
 const base: CopperheadConfig = { schematic: null, board: null, ...DEFAULTS };
 
@@ -68,7 +70,14 @@ describe('compat settings resolution (D1/D2)', () => {
   });
 
   it('isLocalEndpoint recognises loopback hosts only', () => {
-    for (const u of ['http://localhost:11434/v1', 'http://127.0.0.1:8080/v1', 'http://ollama.local/v1']) {
+    for (const u of [
+      'http://localhost:11434/v1',
+      'http://127.0.0.1:8080/v1',
+      'http://ollama.local/v1',
+      // ::1 is IPv6 loopback and, per AC-3.14, must be recognised the same
+      // way as 127.0.0.1 — bracketed form is what a real URL requires.
+      'http://[::1]:11434/v1',
+    ]) {
       expect(isLocalEndpoint(u), u).toBe(true);
     }
     for (const u of ['https://api.groq.com/openai/v1', 'https://openrouter.ai/api/v1', undefined, 'not a url']) {
@@ -84,7 +93,9 @@ describe('OpenAIProvider — compatible endpoints', () => {
       { baseURL: 'https://api.groq.com/openai/v1', apiKeyEnv: 'GROQ_API_KEY' },
       { GROQ_API_KEY: 'gsk-test' },
     );
-    expect(p.name).toBe('openai');
+    // A compat endpoint gets a distinct name so otherProvider() (loop.ts)
+    // never treats it as real OpenAI and fails it over to a paid key.
+    expect(p.name).toBe('openai-compat');
   });
 
   // The headline claim of this change is "point it anywhere and it works", so
@@ -175,10 +186,15 @@ describe('OpenAIProvider — compatible endpoints', () => {
 
 describe('makeProvider — compat routing', () => {
   const groq = { baseURL: 'https://api.groq.com/openai/v1', apiKeyEnv: 'GROQ_API_KEY' };
-  const withKey = <T>(fn: () => T): T => {
+  const withKey = async <T>(fn: () => Promise<T>): Promise<T> => {
     process.env.GROQ_API_KEY = 'gsk-test';
     try {
-      return fn();
+      // Must await here, not just return the promise: the `finally` below
+      // would otherwise run at fn()'s first `await` (i.e. immediately, since
+      // fn() returns synchronously before yielding), deleting the env var
+      // before the callback's own awaits — including the credential read
+      // inside makeProvider — actually settle.
+      return await fn();
     } finally {
       delete process.env.GROQ_API_KEY;
     }
@@ -188,7 +204,19 @@ describe('makeProvider — compat routing', () => {
     await withKey(async () => {
       const p = await makeProvider('compat:qwen-3-coder', false, groq);
       expect(p).toBeInstanceOf(OpenAIProvider);
-      expect(p.name).toBe('openai');
+      expect(p.name).toBe('openai-compat');
+    });
+  });
+
+  it('has a distinct name so otherProvider() never fails a rate-limited compat run over to a paid key', async () => {
+    // otherProvider() (loop.ts) only swaps openai<->anthropic by exact name
+    // match. Before this fix OpenAIProvider.name was the fixed literal
+    // 'openai' regardless of baseURL, so a 429 against a free/local compat
+    // endpoint (which routinely 429s) would silently fail over to the real,
+    // paid Anthropic API if ANTHROPIC_API_KEY happened to be set.
+    await withKey(async () => {
+      const p = await makeProvider('compat:qwen-3-coder', false, groq);
+      expect(['openai', 'anthropic']).not.toContain(p.name);
     });
   });
 
@@ -230,6 +258,15 @@ describe('makeProvider — compat routing', () => {
     await expect(makeProvider('compat:qwen-3-coder', false, groq)).rejects.toThrow('GROQ_API_KEY is not set');
   });
 
+  it('falls back to DEFAULT_API_KEY_ENV when the compat settings argument is omitted entirely', async () => {
+    // Both production call sites (loop.ts, create.ts) always resolve settings
+    // via resolveCompatSettings() first, so this default arm
+    // (`compat ?? { apiKeyEnv: DEFAULT_API_KEY_ENV }`) only exercises when a
+    // caller omits the third argument, as a direct makeProvider('compat:...')
+    // call (no settings) would.
+    await expect(makeProvider('compat:qwen-3-coder')).rejects.toThrow(/requires an endpoint/);
+  });
+
   it('a stray COPPERHEAD_BASE_URL never redirects a plain gpt-5 run (D2)', async () => {
     // resolveCompatSettings correctly reports the env base URL — that alone
     // does not prove makeProvider ignores it. Route through the real makeProvider,
@@ -244,6 +281,88 @@ describe('makeProvider — compat routing', () => {
       expect(JSON.stringify(p)).not.toContain('evil.example');
     } finally {
       delete process.env.OPENAI_API_KEY;
+    }
+  });
+});
+
+describe('config.json baseURL reaches a real do run (offline, no injected provider)', () => {
+  // Every other test in this file (and every offline loop test elsewhere)
+  // injects opts.provider, so runAgentLoop's own
+  // `opts.provider ?? (await makeProvider(opts.model, sessionResume, resolveCompatSettings(config)))`
+  // (loop.ts) never evaluates its right-hand side. Nothing else proves a
+  // `baseURL` configured in .copperhead/config.json actually reaches the
+  // request on a real `do` run — only the opt-in live matrix does, which is
+  // skipped by default. This test crosses that seam for real, with a
+  // loopback server standing in for a compat endpoint.
+  it('a compat baseURL configured in .copperhead/config.json is honoured with no injected provider', async () => {
+    const { repo, cleanup } = await tempFixtureRepo();
+    const seen: { url?: string; auth?: string; model?: unknown } = {};
+    const server = createServer((req, res) => {
+      let raw = '';
+      req.on('data', (c) => (raw += c));
+      req.on('end', () => {
+        seen.url = req.url;
+        seen.auth = req.headers.authorization;
+        const body = JSON.parse(raw) as { model?: unknown };
+        seen.model = body.model;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: null,
+                  tool_calls: [
+                    {
+                      id: 'fin',
+                      type: 'function',
+                      function: {
+                        name: 'finish',
+                        arguments: JSON.stringify({ outcome: 'refuse', summary: 'nothing to do (test)' }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+            usage: { prompt_tokens: 11, completion_tokens: 4 },
+          }),
+        );
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address() as AddressInfo;
+    try {
+      await mkdir(path.join(repo, '.copperhead'), { recursive: true });
+      await writeFile(
+        path.join(repo, '.copperhead', 'config.json'),
+        JSON.stringify({ baseURL: `http://127.0.0.1:${port}/v1`, apiKeyEnv: 'COMPAT_TEST_KEY' }),
+        'utf8',
+      );
+      await execa('git', ['add', '-A'], { cwd: repo });
+      await execa('git', ['commit', '-q', '-m', 'compat config'], { cwd: repo });
+
+      process.env.COMPAT_TEST_KEY = 'compat-test-key-value';
+      let res;
+      try {
+        res = await runAgentLoop({
+          repoRoot: repo,
+          request: 'compat baseURL threading test',
+          model: 'compat:qwen-3-coder',
+          log: () => {},
+          meta: { command: 'do', modelSource: 'flag', version: '0.0.0-test', kicadCliVersion: '0.0.0' },
+        });
+      } finally {
+        delete process.env.COMPAT_TEST_KEY;
+      }
+
+      expect(seen.url).toBe('/v1/chat/completions');
+      expect(seen.auth).toBe('Bearer compat-test-key-value');
+      expect(seen.model).toBe('qwen-3-coder');
+      expect(res.outcome).toBe('refused');
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+      await cleanup();
     }
   });
 });
