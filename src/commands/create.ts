@@ -89,13 +89,12 @@ export const STAGES: Stage[] = [
       const text = await readFile(p, 'utf8');
       const budgetsMatch = /^#{1,6}\s.*\bBudgets?\b/im.test(text);
       if (!budgetsMatch) return false;
-      // Find the Budgets section and check for real content (non-comment, non-blank lines)
+      // Find the Budgets section and strip HTML comments (single or multi-line)
       const afterBudgets = text.split(/^#{1,6}\s.*\bBudgets?\b/im)[1] ?? '';
       const nextSection = afterBudgets.search(/^#{1,6}\s/m);
       const section = nextSection >= 0 ? afterBudgets.slice(0, nextSection) : afterBudgets;
-      const realLines = section.split('\n').filter(
-        (l) => l.trim() && !l.trim().startsWith('<!--') && !l.trim().startsWith('-->'),
-      );
+      const cleanSection = section.replace(/<!--[\s\S]*?-->/g, '');
+      const realLines = cleanSection.split('\n').filter((l) => l.trim().length > 0);
       return realLines.length > 0;
     },
     prompt: (brief) =>
@@ -104,18 +103,23 @@ export const STAGES: Stage[] = [
   {
     name: 'architecture',
     isComplete: async (root, docs) => {
-      // init scaffolds SUBSYSTEMS.md with a "## Sheet X" heading auto-generated
-      // from existing symbols. Require at least one ## section with a non-empty
-      // content line beneath it (a filled section means real architecture work).
+      // init scaffolds SUBSYSTEMS.md with boilerplate description text and auto-generated
+      // "## Sheet X" headings containing "- Ref: Value" symbol bullets.
+      // Require at least one level-2+ heading (## section) AND at least one real prose
+      // line beneath it (excluding boilerplate and auto-generated symbol bullets).
       const p = path.join(root, docs, 'SUBSYSTEMS.md');
       if (!existsSync(p)) return false;
       const text = await readFile(p, 'utf8');
-      // Must have at least one ## section
-      if (!/^#{1,6}\s/m.test(text)) return false;
-      // Must have at least one non-blank, non-heading line (real content)
-      const contentLines = text.split('\n').filter(
-        (l) => l.trim() && !l.trim().startsWith('#'),
-      );
+      // Must have at least one level-2+ (##) section heading
+      if (!/^#{2,6}\s/m.test(text)) return false;
+      // Filter out headings, scaffold description, and auto-generated symbol bullets (- Ref: Value)
+      const contentLines = text.split('\n').filter((l) => {
+        const trimmed = l.trim();
+        if (!trimmed || trimmed.startsWith('#')) return false;
+        if (trimmed.includes('Per-sheet values and reasoning')) return false;
+        if (/^-\s+[A-Za-z0-9_]+:/.test(trimmed)) return false; // auto-generated symbol bullet
+        return true;
+      });
       return contentLines.length > 0;
     },
     prompt: () =>
