@@ -12,6 +12,7 @@ import {
   CONFIG_DIR,
   DEFAULT_API_KEY_ENV,
   resolveCompatSettings,
+  isCompatModel,
   type CompatSettings,
   type CopperheadConfig,
 } from '../config.js';
@@ -90,7 +91,7 @@ export async function makeProvider(
   // Ollama). An explicit `compat` prefix is the opt-in: nothing else
   // consults baseURL, so a stray COPPERHEAD_BASE_URL cannot redirect a keyed
   // `gpt-5` run to a third party (design D2).
-  if (model === 'compat' || model.startsWith('compat:')) {
+  if (isCompatModel(model)) {
     const compatModel = model.startsWith('compat:') ? model.slice('compat:'.length) : undefined;
     if (compatModel === '') {
       throw new Error('compat model override cannot be empty; use "compat:<model-id>"');
@@ -269,12 +270,17 @@ async function runWithMemory(
   // already paid for instead of re-calling the model (repo-scoped, cross-run).
   // Skip an injected provider (tests drive scripted providers directly).
   if (config.llmCache && !opts.provider) {
+    // Mirrors makeProvider's own gate above (D2/AC-3.16): COPPERHEAD_BASE_URL
+    // is consulted only for the explicit `compat:` route, so a gpt-5/claude
+    // run's cache key must not vary with a variable that run never reads —
+    // otherwise every non-compat cache entry gets orphaned each time the
+    // endpoint used for compat testing changes.
     provider = new CachingProvider(
       provider,
       path.join(repoRoot, CONFIG_DIR, 'llm-cache'),
       log,
       opts.model,
-      compatSettings.baseURL,
+      isCompatModel(opts.model) ? compatSettings.baseURL : undefined,
     );
   }
   providers.add(provider);

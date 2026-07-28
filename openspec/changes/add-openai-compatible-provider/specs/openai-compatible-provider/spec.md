@@ -43,3 +43,16 @@ The provider SHALL require a credential only when the resolved endpoint is remot
 - **GIVEN** `COPPERHEAD_BASE_URL` is exported in the environment
 - **WHEN** a run starts with `--model gpt-5`
 - **THEN** the provider targets the default OpenAI endpoint, because only the `compat` route consults `baseURL`
+
+### Requirement: Compat cache entries are endpoint-scoped
+The response cache SHALL key a `compat:<model-id>` turn on its resolved `baseURL` as well as its model id and conversation, since a model id is not unique across hosts (Groq, OpenRouter, and others commonly serve overlapping ids). The cache key for a non-`compat` run SHALL NOT depend on `baseURL`, matching the same isolation as request routing (AC-3.16): only the explicit `compat` route reads it.
+
+#### Scenario: switching a compat run's endpoint misses the previous host's cache
+- **GIVEN** a cached turn for `compat:llama-3.1-8b-instant` against `https://api.groq.com/openai/v1`
+- **WHEN** the same conversation is re-run as `compat:llama-3.1-8b-instant` against `https://openrouter.ai/api/v1`
+- **THEN** the cache misses and the new endpoint is called, rather than replaying Groq's cached response
+
+#### Scenario: a non-compat run's cache is unaffected by baseURL
+- **GIVEN** a cached turn for `gpt-5` from before this endpoint-scoping existed
+- **WHEN** the same conversation is re-run as `gpt-5`, regardless of any `COPPERHEAD_BASE_URL` set in the environment
+- **THEN** the cache hits exactly as it did before, since a non-`compat` model's key never includes `baseURL`

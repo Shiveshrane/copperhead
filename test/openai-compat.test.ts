@@ -10,6 +10,7 @@ import { OpenAIProvider } from '../src/agent/providers/openai.js';
 import {
   DEFAULT_API_KEY_ENV,
   isLocalEndpoint,
+  isCompatModel,
   loadConfig,
   resolveCompatSettings,
   type CopperheadConfig,
@@ -82,6 +83,15 @@ describe('compat settings resolution (D1/D2)', () => {
     }
     for (const u of ['https://api.groq.com/openai/v1', 'https://openrouter.ai/api/v1', undefined, 'not a url']) {
       expect(isLocalEndpoint(u as string | undefined), String(u)).toBe(false);
+    }
+  });
+
+  it('isCompatModel identifies exactly the compat route, matching makeProvider\'s own gate', () => {
+    for (const m of ['compat', 'compat:qwen-3-coder', 'compat:llama-3.1-8b-instant']) {
+      expect(isCompatModel(m), m).toBe(true);
+    }
+    for (const m of ['gpt-5', 'gpt-5-mini', 'claude', 'claude-opus-4-5', 'codex', 'cursor', 'claude-code']) {
+      expect(isCompatModel(m), m).toBe(false);
     }
   });
 });

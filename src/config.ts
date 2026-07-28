@@ -202,6 +202,19 @@ export function resolveCompatSettings(config: CopperheadConfig, env = process.en
 }
 
 /**
+ * True when a resolved model id routes through the `compat` provider (D1/D2).
+ * The single source of truth for that gate: `makeProvider` uses it to decide
+ * whether to consult `CompatSettings` at all, and the response cache (loop.ts)
+ * uses it to decide whether a run's cache key may depend on `baseURL` — a
+ * non-compat run (gpt-5, claude, ...) never reads COPPERHEAD_BASE_URL, so its
+ * cache key must not vary with it either, or every entry gets orphaned each
+ * time the endpoint used for unrelated compat testing changes.
+ */
+export function isCompatModel(model: string): boolean {
+  return model === 'compat' || model.startsWith('compat:');
+}
+
+/**
  * True when the endpoint is loopback, i.e. a local server such as Ollama.
  * Those need no credential (design D4); a remote endpoint always does.
  */

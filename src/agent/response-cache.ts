@@ -50,7 +50,11 @@ export class CachingProvider implements Provider {
       .update(
         JSON.stringify({
           model: this.modelId ?? this.name,
-          baseURL: this.baseURL ?? null,
+          // Omitted rather than `?? null` when unset: a non-compat run's key
+          // must stay byte-identical to what it hashed before baseURL existed
+          // (F6/D2), or every pre-existing cache entry — not just compat ones —
+          // is orphaned on the first run after upgrade.
+          ...(this.baseURL ? { baseURL: this.baseURL } : {}),
           messages,
           tools: tools.map((t) => t.name),
         }),
