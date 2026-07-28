@@ -117,7 +117,7 @@ export const STAGES: Stage[] = [
         const trimmed = l.trim();
         if (!trimmed || trimmed.startsWith('#')) return false;
         if (trimmed.includes('Per-sheet values and reasoning')) return false;
-        if (/^-\s+[A-Za-z0-9_]+:/.test(trimmed)) return false; // auto-generated symbol bullet
+        if (/^-\s+[A-Za-z]+\d+[A-Za-z]*:/.test(trimmed)) return false; // auto-generated refdes symbol bullet (e.g. - R1: 10k)
         return true;
       });
       return contentLines.length > 0;

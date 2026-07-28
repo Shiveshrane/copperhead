@@ -142,6 +142,18 @@ describe('architecture isComplete', () => {
       expect(await stageNamed('architecture')(root, DOCS)).toBe(true);
     });
   });
+
+  it('returns true when SUBSYSTEMS.md has bullet-styled subsystem reasoning lines', async () => {
+    await withTmpDir(async (root) => {
+      await mkdir(path.join(root, DOCS), { recursive: true });
+      await writeFile(
+        path.join(root, DOCS, 'SUBSYSTEMS.md'),
+        `# Subsystems\n\n## Power\n\n- Regulator: AP2112, 3.3V/600mA, chosen for low quiescent current\n- Battery: single-cell LiPo, protection via BQ24075\n`,
+        'utf8',
+      );
+      expect(await stageNamed('architecture')(root, DOCS)).toBe(true);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
