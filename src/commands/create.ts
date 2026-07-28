@@ -143,7 +143,7 @@ export const STAGES: Stage[] = [
       return rows.some((row) => {
         const cols = row.split('|').map((c) => c.trim());
         const mpn = cols[4] ?? ''; // 0=empty, 1=Refdes, 2=Value, 3=Footprint, 4=MPN
-        return mpn && mpn.toUpperCase() !== 'UNVERIFIED' && !mpn.toUpperCase().startsWith('UNVERIFIED');
+        return mpn && !mpn.toUpperCase().startsWith('UNVERIFIED');
       });
     },
     prompt: () =>
@@ -200,7 +200,7 @@ export const STAGES: Stage[] = [
     isComplete: async (root) => {
       // An empty outputs/ dir (e.g. from a failed export run) must not count
       // as complete. Require at least one Gerber file (any .gbr variant).
-      return dirHasFiles(path.join(root, 'outputs'), ['.gbr', '.gtl', '.gbl', '.gbs', '.gbo', '.gbp', '.gbd']);
+      return dirHasFiles(path.join(root, 'outputs'), ['.gbr', '.gtl', '.gbl', '.gbs', '.gbo', '.gbp', '.gbd', '.gto', '.gts', '.gml', '.drl']);
     },
     prompt: () =>
       'Stage 6: outputs package. Export into outputs/: gerbers+drill (JLC profile), DXF and STEP outline, SVG renders (export_svg), and an ordering BOM.csv generated from BOM.md (refdes, MPN, qty). Every export must succeed.',
@@ -209,7 +209,7 @@ export const STAGES: Stage[] = [
     name: 'firmware',
     isComplete: async (root) => {
       // An empty firmware/ dir must not count. Require at least one source file.
-      return dirHasFiles(path.join(root, 'firmware'), ['.c', '.h', '.cpp', '.py', '.rs', '.ino']);
+      return dirHasFiles(path.join(root, 'firmware'), ['.c', '.h', '.cpp', '.hpp', '.py', '.rs', '.ino', '.s']);
     },
     prompt: () =>
       'Stage 7: firmware scaffold. Generate firmware/ for the chosen MCU HAL: pins.h generated from PINOUT.md (single source of truth), driver stubs, and one working happy path. If the vendor toolchain is available, the build must pass; if not, note "not compiled here" explicitly in DEVPLAN.md.',

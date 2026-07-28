@@ -23,10 +23,10 @@ function stageNamed(name: string) {
 
 /** Create a fresh temp dir, run the callback, then remove it. */
 async function withTmpDir(fn: (root: string) => Promise<void>): Promise<void> {
-  const root = await import('node:fs/promises').then(() =>
-    import('node:os').then((m) => m.default.tmpdir()),
+  const dir = path.join(
+    os.tmpdir(),
+    `copperhead-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
-  const dir = path.join(root, `copperhead-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   await mkdir(dir, { recursive: true });
   try {
     await fn(dir);
