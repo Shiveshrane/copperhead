@@ -346,6 +346,20 @@ describe('optional outer pipes (GitHub-flavored markdown)', () => {
     expect(parseBomTable(md).map((r) => r.refdes)).toEqual(['R1']);
   });
 
+  it('the export reader does not read a pipe-bearing prose line as a part either', () => {
+    const md = [bom, 'Legend: UNVERIFIED | needs a datasheet check'].join('\n');
+    const flat = parseMarkdownTables(md).filter((r) => !isHeader(r));
+    expect(flat.map((r) => r.cells[0])).toEqual(['R1']);
+  });
+
+  it('the export reader ignores a prose line whose cell count matches the header', () => {
+    // The quiet variant: a matching cell count puts a real value in the MPN
+    // column, so the phantom row reaches the ordering CSV without a warning.
+    const md = [bom, '', 'Second-source options: Yageo | Vishay | KOA | Panasonic'].join('\n');
+    const flat = parseMarkdownTables(md).filter((r) => !isHeader(r));
+    expect(flat.map((r) => r.cells[0])).toEqual(['R1']);
+  });
+
   it('a prose line carrying a pipe does not hide the table under it', () => {
     const md = ['Nets are named `A | B` in the legend.', '| Refdes | Pin | Net |', '|---|---|---|', '| U1 | 1 | 3V3 |'].join('\n');
     expect(parsePinoutRows(md)).toEqual([{ ref: 'U1', pin: '1', net: '3V3' }]);
@@ -412,6 +426,8 @@ describe('optional outer pipes (GitHub-flavored markdown)', () => {
       b3,
     ].join('\n');
     expect(parsePinoutRows(md).map((r) => r.ref)).toEqual(['U1']);
+    // The export reader has no header filter, so it must be checked separately.
+    expect(parseMarkdownTables(md).filter((r) => !isHeader(r)).map((r) => r.cells[0])).toEqual(['U1']);
   });
 
   it('still treats a legally indented fence as a fence', () => {

@@ -35,15 +35,25 @@ export interface TableRow {
    * whatever cells they split into — this function never throws.
    */
   export function parseMarkdownTables(md: string): TableRow[] {
-    return scanTableGroups(md)
-      .flat()
-      .filter((l) => !l.separator)
-      .map((l) => ({ cells: l.cells }));
+    return (
+      scanTableGroups(md)
+        // A group opened by an un-piped line with no delimiter row is not a table:
+        // GFM requires the delimiter row for one to exist at all. Without this,
+        // ordinary prose such as `Second-source options: Yageo | Vishay | KOA`
+        // under a BOM table becomes a part in `export bom`, which `check` cannot
+        // catch because `parseCanonicalTables` drops the header-less group.
+        .filter((g) => g[0]!.piped || g.some((l) => l.separator))
+        .flat()
+        .filter((l) => !l.separator)
+        .map((l) => ({ cells: l.cells }))
+    );
   }
 
   interface ScannedLine {
     cells: string[];
     separator: boolean;
+    /** Whether the source line carried a leading pipe. */
+    piped: boolean;
   }
 
   /**
@@ -108,7 +118,7 @@ export interface TableRow {
       }
       // The separator row stays in the group so the header can be located
       // relative to it; it is dropped by the readers above and below.
-      current.push({ cells, separator: isSeparatorRow(cells) });
+      current.push({ cells, separator: isSeparatorRow(cells), piped: t.startsWith('|') });
     }
     return groups;
   }
