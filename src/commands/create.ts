@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { existsSync } from 'node:fs';
-import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { loadConfig } from '../config.js';
 import { bootstrapKicadProject } from '../kicad/bootstrap.js';
@@ -62,9 +62,8 @@ async function docHasHeading(repoRoot: string, rel: string, word: string): Promi
  */
 async function dirHasFiles(dirPath: string, exts?: string[]): Promise<boolean> {
   if (!existsSync(dirPath)) return false;
-  const { readdir: rd } = await import('node:fs/promises');
   async function walk(dir: string): Promise<boolean> {
-    for (const entry of await rd(dir, { withFileTypes: true })) {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
       if (entry.isDirectory()) {
         if (await walk(path.join(dir, entry.name))) return true;
       } else if (!exts || exts.some((e) => entry.name.toLowerCase().endsWith(e))) {
@@ -91,8 +90,10 @@ export const STAGES: Stage[] = [
       if (!budgetsMatch) return false;
       // Find the Budgets section and strip HTML comments (single or multi-line)
       const afterBudgets = text.split(/^#{1,6}\s.*\bBudgets?\b/im)[1] ?? '';
-      const nextSection = afterBudgets.search(/^#{1,6}\s/m);
-      const section = nextSection >= 0 ? afterBudgets.slice(0, nextSection) : afterBudgets;
+      const firstNewline = afterBudgets.indexOf('\n');
+      const afterHeadingLine = firstNewline >= 0 ? afterBudgets.slice(firstNewline + 1) : '';
+      const nextSection = afterHeadingLine.search(/^#{1,6}\s/m);
+      const section = nextSection >= 0 ? afterHeadingLine.slice(0, nextSection) : afterHeadingLine;
       const cleanSection = section.replace(/<!--[\s\S]*?-->/g, '');
       const realLines = cleanSection.split('\n').filter((l) => l.trim().length > 0);
       return realLines.length > 0;
@@ -112,12 +113,12 @@ export const STAGES: Stage[] = [
       const text = await readFile(p, 'utf8');
       // Must have at least one level-2+ (##) section heading
       if (!/^#{2,6}\s/m.test(text)) return false;
-      // Filter out headings, scaffold description, and auto-generated symbol bullets (- Ref: Value)
+      // Filter out headings, scaffold description, and auto-generated symbol bullets (- Ref: Value or - Ref?: Value)
       const contentLines = text.split('\n').filter((l) => {
         const trimmed = l.trim();
         if (!trimmed || trimmed.startsWith('#')) return false;
         if (trimmed.includes('Per-sheet values and reasoning')) return false;
-        if (/^-\s+[A-Za-z]+\d+[A-Za-z]*:/.test(trimmed)) return false; // auto-generated refdes symbol bullet (e.g. - R1: 10k)
+        if (/^-\s+(?:[A-Za-z]*\d+[A-Za-z]*|[A-Za-z]*\?):/.test(trimmed)) return false; // auto-generated refdes symbol bullet (e.g. - R1: 10k, - U?: ESP32, - ?: 10k)
         return true;
       });
       return contentLines.length > 0;
@@ -200,7 +201,7 @@ export const STAGES: Stage[] = [
     isComplete: async (root) => {
       // An empty outputs/ dir (e.g. from a failed export run) must not count
       // as complete. Require at least one Gerber file (any .gbr variant).
-      return dirHasFiles(path.join(root, 'outputs'), ['.gbr', '.gtl', '.gbl', '.gbs', '.gbo', '.gbp', '.gbd', '.gto', '.gts', '.gml', '.drl']);
+      return dirHasFiles(path.join(root, 'outputs'), ['.gbr', '.gtl', '.gbl', '.gbs', '.gbo', '.gbp', '.gbd', '.gto', '.gts', '.gml']);
     },
     prompt: () =>
       'Stage 6: outputs package. Export into outputs/: gerbers+drill (JLC profile), DXF and STEP outline, SVG renders (export_svg), and an ordering BOM.csv generated from BOM.md (refdes, MPN, qty). Every export must succeed.',

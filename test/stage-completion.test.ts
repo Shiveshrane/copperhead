@@ -81,6 +81,18 @@ describe('spec-seed isComplete', () => {
     });
   });
 
+  it('returns false when SPEC.md Budgets heading has trailing title text and contains HTML comments only', async () => {
+    await withTmpDir(async (root) => {
+      await mkdir(path.join(root, DOCS), { recursive: true });
+      await writeFile(
+        path.join(root, DOCS, 'SPEC.md'),
+        `# My Project\n\n## 3. Budgets and constraints\n\n<!-- Add hard budgets here -->\n\n## Assumptions\n`,
+        'utf8',
+      );
+      expect(await stageNamed('spec-seed')(root, DOCS)).toBe(false);
+    });
+  });
+
   it('returns true when SPEC.md has a Budgets section with real content lines', async () => {
     await withTmpDir(async (root) => {
       await mkdir(path.join(root, DOCS), { recursive: true });
@@ -125,6 +137,18 @@ describe('architecture isComplete', () => {
       await writeFile(
         path.join(root, DOCS, 'SUBSYSTEMS.md'),
         `# Subsystems\n\nPer-sheet values and reasoning (regulator, charger, RF, ...).\n\n## Sheet hardware\n\n- R1: 10k\n- U1: ESP32\n`,
+        'utf8',
+      );
+      expect(await stageNamed('architecture')(root, DOCS)).toBe(false);
+    });
+  });
+
+  it('returns false for untouched init scaffold SUBSYSTEMS.md output with unannotated symbol bullets (- U?: / - ?:)', async () => {
+    await withTmpDir(async (root) => {
+      await mkdir(path.join(root, DOCS), { recursive: true });
+      await writeFile(
+        path.join(root, DOCS, 'SUBSYSTEMS.md'),
+        `# Subsystems\n\nPer-sheet values and reasoning (regulator, charger, RF, ...).\n\n## Sheet hardware\n\n- U?: ESP32\n- ?: 10k\n- R?: 100n\n`,
         'utf8',
       );
       expect(await stageNamed('architecture')(root, DOCS)).toBe(false);
@@ -222,6 +246,14 @@ describe('outputs isComplete', () => {
     await withTmpDir(async (root) => {
       await mkdir(path.join(root, 'outputs'), { recursive: true });
       await writeFile(path.join(root, 'outputs', 'BOM.csv'), 'ref,mpn\nR1,RC0603\n', 'utf8');
+      expect(await stageNamed('outputs')(root, DOCS)).toBe(false);
+    });
+  });
+
+  it('returns false when outputs/ contains only a .drl drill file (no Gerbers)', async () => {
+    await withTmpDir(async (root) => {
+      await mkdir(path.join(root, 'outputs'), { recursive: true });
+      await writeFile(path.join(root, 'outputs', 'board.drl'), 'M48\n', 'utf8');
       expect(await stageNamed('outputs')(root, DOCS)).toBe(false);
     });
   });
