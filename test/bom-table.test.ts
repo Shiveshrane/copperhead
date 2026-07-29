@@ -354,4 +354,23 @@ describe('optional outer pipes (GitHub-flavored markdown)', () => {
   it('ignores a pipe-free document', () => {
     expect(parseCanonicalRows('# Just prose\n\nNo tables here.\n')).toEqual([]);
   });
+  it('does not read an example table inside a fenced code block', () => {
+    const md = [
+      '| Refdes | Pin | Net |',
+      '|---|---|---|',
+      '| U1 | 1 | 3V3 |',
+      '',
+      '```markdown',
+      'Refdes | Pin | Net',
+      '--- | --- | ---',
+      'U9 | 42 | EXAMPLE_NET',
+      '```',
+    ].join('\n');
+    expect(parsePinoutRows(md)).toEqual([{ ref: 'U1', pin: '1', net: '3V3' }]);
+  });
+
+  it('the check reader and the export reader agree on an un-piped BOM', () => {
+    expect(parseBomTable(bom)).toHaveLength(1);
+    expect(parseMarkdownTables(bom).filter((r) => !isHeader(r))).toHaveLength(1);
+  });
 });
