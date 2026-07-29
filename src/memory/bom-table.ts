@@ -64,18 +64,26 @@ export interface TableRow {
     // line would let a shorter or different delimiter *inside* a block end it
     // early, and the example rows after it would be read as parts or pins.
     let fence: { char: string; length: number } | null = null;
-    for (const line of md.split('\n')) {
+    // Split on either line ending: a CRLF document would otherwise leave a
+    // trailing \r on every line, and \r is a line terminator that `.` does not
+    // match, so the fence patterns below would never fire on a CRLF file.
+    for (const line of md.split(/\r?\n/)) {
       const t = line.trim();
-      const delim = /^(`{3,}|~{3,})/.exec(t);
+      // Matched against the raw line: CommonMark allows a fence up to three
+      // spaces of indentation, and four or more makes it content rather than a
+      // fence. Trimming first would let an indented delimiter inside a block
+      // read as a closer.
+      const delim = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
       if (delim) {
-        const [char, length] = [delim[1]![0]!, delim[1]!.length];
+        const marker = delim[1]!;
+        const char = marker[0]!;
         if (!fence) {
-          fence = { char, length };
+          fence = { char, length: marker.length };
           current = null;
           continue;
         }
         // A closing fence carries no info string; anything else stays content.
-        if (char === fence.char && length >= fence.length && !t.slice(length).trim()) {
+        if (char === fence.char && marker.length >= fence.length && !delim[2]!.trim()) {
           fence = null;
           current = null;
           continue;

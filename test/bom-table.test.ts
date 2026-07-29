@@ -396,6 +396,58 @@ describe('optional outer pipes (GitHub-flavored markdown)', () => {
     expect(parsePinoutRows(md).map((r) => r.ref)).toEqual(['U1']);
   });
 
+  it('an over-indented delimiter inside a block is content, not a closer', () => {
+    const b3 = '`'.repeat(3);
+    const md = [
+      '| Refdes | Pin | Net |',
+      '|---|---|---|',
+      '| U1 | 1 | 3V3 |',
+      '',
+      b3 + 'markdown',
+      '    ' + b3,
+      'Refdes | Pin | Net',
+      '--- | --- | ---',
+      'U9 | 42 | LEAKED',
+      '',
+      b3,
+    ].join('\n');
+    expect(parsePinoutRows(md).map((r) => r.ref)).toEqual(['U1']);
+  });
+
+  it('still treats a legally indented fence as a fence', () => {
+    const b3 = '`'.repeat(3);
+    const md = [
+      '| Refdes | Pin | Net |',
+      '|---|---|---|',
+      '| U1 | 1 | 3V3 |',
+      '',
+      '  ' + b3 + 'markdown',
+      'Refdes | Pin | Net',
+      '--- | --- | ---',
+      'U5 | 5 | EXAMPLE',
+      '',
+      '  ' + b3,
+    ].join('\n');
+    expect(parsePinoutRows(md).map((r) => r.ref)).toEqual(['U1']);
+  });
+
+  it('handles CRLF documents', () => {
+    const b3 = '`'.repeat(3);
+    const md = [
+      '| Refdes | Pin | Net |',
+      '|---|---|---|',
+      '| U1 | 1 | 3V3 |',
+      '',
+      b3 + 'markdown',
+      'Refdes | Pin | Net',
+      '--- | --- | ---',
+      'U9 | 42 | LEAKED',
+      '',
+      b3,
+    ].join('\r\n');
+    expect(parsePinoutRows(md).map((r) => r.ref)).toEqual(['U1']);
+  });
+
   it('a tilde fence does not close a backtick fence', () => {
     const b3 = '`'.repeat(3);
     const md = [
