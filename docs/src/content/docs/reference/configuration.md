@@ -115,7 +115,7 @@ So every other row below is a dedicated integration for one specific vendor's lo
 
 `claude-code` is matched before the `claude` prefix, so it is never captured by the Anthropic API route. Cursor runs report 0 token usage (CLI JSON has no usage fields).
 
-For `compat:<id>`, set `baseURL` (env `COPPERHEAD_BASE_URL` or `.copperhead/config.json`) and, if the endpoint needs a key, `apiKeyEnv` (env `COPPERHEAD_API_KEY_ENV` or config). Each resolves independently - env wins over config for whichever one it sets - so you can mix sources, e.g. `baseURL` in config with `COPPERHEAD_API_KEY_ENV` as an env var. Only `baseURL` is required; `apiKeyEnv` defaults to `OPENAI_API_KEY` if left unset. The three pieces below are always: the endpoint, the name of the env var holding the key, and that env var itself.
+For `compat:<id>`, set `baseURL` (env `COPPERHEAD_BASE_URL` or `.copperhead/config.json`) and, if the endpoint needs a key, `apiKeyEnv` (env `COPPERHEAD_API_KEY_ENV` or config). Each resolves independently - env wins over config for whichever one it sets - so you can mix sources, e.g. `baseURL` in config with `COPPERHEAD_API_KEY_ENV` as an env var. `baseURL` is required for every compat endpoint. Non-local endpoints (Gemini, Groq, OpenRouter) also need the actual key, held in the variable `apiKeyEnv` names (defaults to `OPENAI_API_KEY` if left unset) - a local endpoint (Ollama) can skip the key entirely. The three pieces below are always: the endpoint, the name of the env var holding the key, and that env var itself.
 
 **Gemini:**
 
