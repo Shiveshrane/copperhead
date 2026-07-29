@@ -123,7 +123,8 @@ For `compat:<id>`, set `baseURL` (env `COPPERHEAD_BASE_URL` or `.copperhead/conf
 export COPPERHEAD_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
 export COPPERHEAD_API_KEY_ENV=GEMINI_API_KEY
 export GEMINI_API_KEY=...
-copperhead do "..." --model compat:<model-id>
+export COPPERHEAD_MODEL=compat:<model-id>   # or pass --model compat:<model-id> instead, per command
+copperhead do "..."
 ```
 
 **Groq:**
@@ -132,7 +133,8 @@ copperhead do "..." --model compat:<model-id>
 export COPPERHEAD_BASE_URL=https://api.groq.com/openai/v1
 export COPPERHEAD_API_KEY_ENV=GROQ_API_KEY
 export GROQ_API_KEY=...
-copperhead do "..." --model compat:<model-id>
+export COPPERHEAD_MODEL=compat:<model-id>   # or pass --model compat:<model-id> instead, per command
+copperhead do "..."
 ```
 
 **OpenRouter:**
@@ -141,14 +143,16 @@ copperhead do "..." --model compat:<model-id>
 export COPPERHEAD_BASE_URL=https://openrouter.ai/api/v1
 export COPPERHEAD_API_KEY_ENV=OPENROUTER_API_KEY
 export OPENROUTER_API_KEY=...
-copperhead do "..." --model compat:<model-id>
+export COPPERHEAD_MODEL=compat:<model-id>   # or pass --model compat:<model-id> instead, per command
+copperhead do "..."
 ```
 
 **Ollama (local, no key):**
 
 ```bash
 export COPPERHEAD_BASE_URL=http://localhost:11434/v1
-copperhead do "..." --model compat:<model-id>
+export COPPERHEAD_MODEL=compat:<model-id>   # or pass --model compat:<model-id> instead, per command
+copperhead do "..."
 ```
 
 Leave `COPPERHEAD_API_KEY_ENV` unset for a local endpoint - no key is sent. Only the `compat` route reads `baseURL`, so leaving any of these set does not affect `gpt-5` or any other model.
