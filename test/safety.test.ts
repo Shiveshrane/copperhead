@@ -76,6 +76,18 @@ describe('secret redaction (AC-4.1)', () => {
     expect(out).toBe('[REDACTED]');
   });
 
+  it('redacts Gemini and Groq keys', () => {
+    // Synthetic, correctly-shaped, never valid.
+    const input = [
+      'AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBc',
+      'gsk_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGH',
+    ].join(' ');
+    const out = redactSecrets(input);
+    expect(out).not.toMatch(/AIzaSy[A-Za-z0-9_-]{10,}/);
+    expect(out).not.toMatch(/gsk_[A-Za-z0-9]{10,}/);
+    expect(out).toBe('[REDACTED] [REDACTED]');
+  });
+
   it('leaves ordinary prose alone', () => {
     // The patterns are deliberately broad, but not so broad that a run summary
     // loses readable text.
