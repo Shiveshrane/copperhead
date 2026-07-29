@@ -331,6 +331,21 @@ describe('optional outer pipes (GitHub-flavored markdown)', () => {
     expect(parsePinoutRows(piped)).toEqual(parsePinoutRows(pinout));
   });
 
+  it('a prose line carrying a pipe below a table is not read as a pin', () => {
+    const md = [
+      '| Refdes | Pin | Net |',
+      '|---|---|---|',
+      '| U1 | 1 | 3V3 |',
+      'Legend: A | B',
+    ].join('\n');
+    expect(parsePinoutRows(md)).toEqual([{ ref: 'U1', pin: '1', net: '3V3' }]);
+  });
+
+  it('a prose line carrying a pipe below an un-piped table is not read as a part', () => {
+    const md = [bom, 'Legend: UNVERIFIED | needs a datasheet check'].join('\n');
+    expect(parseBomTable(md).map((r) => r.refdes)).toEqual(['R1']);
+  });
+
   it('a prose line carrying a pipe does not hide the table under it', () => {
     const md = ['Nets are named `A | B` in the legend.', '| Refdes | Pin | Net |', '|---|---|---|', '| U1 | 1 | 3V3 |'].join('\n');
     expect(parsePinoutRows(md)).toEqual([{ ref: 'U1', pin: '1', net: '3V3' }]);

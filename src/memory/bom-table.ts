@@ -89,6 +89,7 @@ export interface TableRow {
     type Line = { cells: string[]; separator: boolean };
     const groups: Line[][] = [];
     let current: Line[] | null = null;
+    let width = 0; // column count of the open group, set by its first line
     for (const line of md.split('\n')) {
       const t = line.trim();
       if (!t.includes('|')) {
@@ -96,8 +97,16 @@ export interface TableRow {
         continue;
       }
       const cells = splitRow(t);
+      // Outer pipes make a line unambiguously a table row. Without them, a
+      // pipe-bearing prose line (`Legend: A | B`) is indistinguishable from a
+      // row by shape alone, so the column count decides: matching the open
+      // table's width keeps it as a row, a mismatch ends the table there rather
+      // than reading the prose as a part/pin. The line still opens a new group,
+      // in case it is itself the header of an un-piped table.
+      if (current && !t.startsWith('|') && cells.length !== width) current = null;
       if (!current) {
         current = [];
+        width = cells.length;
         groups.push(current);
       }
       // The separator row stays in the group so the header can be located
