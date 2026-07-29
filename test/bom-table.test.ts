@@ -370,7 +370,47 @@ describe('optional outer pipes (GitHub-flavored markdown)', () => {
   });
 
   it('the check reader and the export reader agree on an un-piped BOM', () => {
-    expect(parseBomTable(bom)).toHaveLength(1);
-    expect(parseMarkdownTables(bom).filter((r) => !isHeader(r))).toHaveLength(1);
+    const checked = parseBomTable(bom);
+    const flat = parseMarkdownTables(bom).filter((r) => !isHeader(r));
+    expect(checked.map((r) => r.refdes)).toEqual(flat.map((r) => r.cells[0]));
+    expect(checked.map((r) => r.refdes)).toEqual(['R1']);
+  });
+
+  it('a shorter or different fence inside a block does not end it early', () => {
+    const b3 = '`'.repeat(3);
+    const b4 = '`'.repeat(4);
+    const md = [
+      '| Refdes | Pin | Net |',
+      '|---|---|---|',
+      '| U1 | 1 | 3V3 |',
+      '',
+      b4 + 'markdown',
+      'Example, do not parse:',
+      b3,
+      'Refdes | Pin | Net',
+      '--- | --- | ---',
+      'U9 | 42 | LEAKED',
+      '',
+      b4,
+    ].join('\n');
+    expect(parsePinoutRows(md).map((r) => r.ref)).toEqual(['U1']);
+  });
+
+  it('a tilde fence does not close a backtick fence', () => {
+    const b3 = '`'.repeat(3);
+    const md = [
+      '| Refdes | Pin | Net |',
+      '|---|---|---|',
+      '| U1 | 1 | 3V3 |',
+      '',
+      b3 + 'markdown',
+      '~~~',
+      'Refdes | Pin | Net',
+      '--- | --- | ---',
+      'U8 | 99 | LEAKED',
+      '',
+      b3,
+    ].join('\n');
+    expect(parsePinoutRows(md).map((r) => r.ref)).toEqual(['U1']);
   });
 });

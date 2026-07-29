@@ -59,15 +59,29 @@ export interface TableRow {
     const groups: ScannedLine[][] = [];
     let current: ScannedLine[] | null = null;
     let width = 0; // column count of the open group, set by its first line
-    let inFence = false;
+    // The open fence's delimiter, or null outside one. A fence closes only on the
+    // same character, at least as long (CommonMark). Toggling on any fence-like
+    // line would let a shorter or different delimiter *inside* a block end it
+    // early, and the example rows after it would be read as parts or pins.
+    let fence: { char: string; length: number } | null = null;
     for (const line of md.split('\n')) {
       const t = line.trim();
-      if (/^(```|~~~)/.test(t)) {
-        inFence = !inFence;
-        current = null;
-        continue;
+      const delim = /^(`{3,}|~{3,})/.exec(t);
+      if (delim) {
+        const [char, length] = [delim[1]![0]!, delim[1]!.length];
+        if (!fence) {
+          fence = { char, length };
+          current = null;
+          continue;
+        }
+        // A closing fence carries no info string; anything else stays content.
+        if (char === fence.char && length >= fence.length && !t.slice(length).trim()) {
+          fence = null;
+          current = null;
+          continue;
+        }
       }
-      if (inFence || !t.includes('|')) {
+      if (fence || !t.includes('|')) {
         current = null; // a blank, prose, or fenced line terminates the table
         continue;
       }
