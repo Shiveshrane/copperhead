@@ -178,6 +178,18 @@ describe('architecture isComplete', () => {
       expect(await stageNamed('architecture')(root, DOCS)).toBe(true);
     });
   });
+
+  it('returns true when SUBSYSTEMS.md has voltage-led bullet reasoning lines (- 5V: / - 12V:)', async () => {
+    await withTmpDir(async (root) => {
+      await mkdir(path.join(root, DOCS), { recursive: true });
+      await writeFile(
+        path.join(root, DOCS, 'SUBSYSTEMS.md'),
+        `# Subsystems\n\n## Power\n\n- 5V: regulated rail from AP2112 LDO\n- 12V: input rail, fused\n`,
+        'utf8',
+      );
+      expect(await stageNamed('architecture')(root, DOCS)).toBe(true);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
