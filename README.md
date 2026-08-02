@@ -57,7 +57,7 @@ The script is conservative by design: it never runs `sudo` and never edits shell
 
 - Node.js ≥ 20
 - [KiCad](https://www.kicad.org/) ≥ 8 with `kicad-cli` on PATH
-- One model backend: a locally installed, ChatGPT-authenticated [Codex CLI](https://learn.chatgpt.com/docs/codex/cli), a logged-in [Cursor Agent CLI](#saved-login-cursor-agent) (`agent login`), logged-in Claude Code (see [Saved login](#saved-login-claude-code)), a local LM Studio server (see [Local models](#local-models-lm-studio)), or `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` in the environment. `check` never calls an LLM.
+- One model backend: a locally installed, ChatGPT-authenticated [Codex CLI](https://learn.chatgpt.com/docs/codex/cli), a logged-in [Cursor Agent CLI](#saved-login-cursor-agent) (`agent login`), logged-in Claude Code (see [Saved login](#saved-login-claude-code)), or `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` in the environment. `check` never calls an LLM.
 
 ## Quick start
 
@@ -124,7 +124,7 @@ copperhead export bom --supplier jlcpcb   # supplier-ready ordering file from do
 
 Global flags: `--repo <path>` (default: cwd) and `--json` for machine-readable output. `--model` is available on `do`, `sync`, `create`, and `doctor`; `--interactive` only on `do` and `create`; `do` also takes `--dry-run`, `--max-turns`, and `--allow-dirty`.
 
-`--model` accepts `gpt-5` (OpenAI), `claude` / `claude-<id>` (Anthropic API), `claude-code` / `claude-code:<id>` (Claude Code, saved login), `cursor` / `cursor:<id>` (Cursor Agent CLI, saved login), `codex` / `codex:<id>` (Codex CLI, saved login), `lmstudio` / `lmstudio:<id>` (a local LM Studio server, no key), and `compat:<id>` (an OpenAI-compatible endpoint via `COPPERHEAD_BASE_URL` and `COPPERHEAD_API_KEY_ENV`). Routing is by prefix; `claude-code` is matched before the `claude` prefix, and `lmstudio` before the OpenAI catch-all.
+`--model` accepts `gpt-5` (OpenAI), `claude` / `claude-<id>` (Anthropic API), `claude-code` / `claude-code:<id>` (Claude Code, saved login), `cursor` / `cursor:<id>` (Cursor Agent CLI, saved login), `codex` / `codex:<id>` (Codex CLI, saved login), `lmstudio` / `lmstudio:<id>` (LM Studio, no cloud key), and `compat:<id>` (an OpenAI-compatible endpoint via `COPPERHEAD_BASE_URL` and `COPPERHEAD_API_KEY_ENV`). Routing is by prefix; `compat` and `lmstudio` are matched before the OpenAI catch-all. `lmstudio` sends prompts to `LMSTUDIO_BASE_URL`: it stays on your machine at the default localhost endpoint, while a remote endpoint receives that content. Bare `lmstudio` discovers a model from `/v1/models`; use `lmstudio:<id>` to pin one or bypass discovery. See [`.env.example`](.env.example) and the [configuration reference](https://docs.copperhead.sh/reference/configuration/#model-selection).
 
 ### Saved login (Cursor Agent)
 
@@ -150,25 +150,6 @@ copperhead do "add reverse-polarity protection on VIN" --model claude-code
 The Claude Agent SDK ships as an optional dependency, so a normal install pulls it in. copperhead loads it only when you select `claude-code`, and prints an actionable error if it is missing (for example after `npm install --omit=optional`), telling you to add it with `npm i @anthropic-ai/claude-agent-sdk`.
 
 copperhead never reads, copies, or logs the credential; the CLI owns authentication. A missing dependency or an unauthenticated install fails with an actionable message and touches nothing.
-
-### Local models (LM Studio)
-
-`--model lmstudio` runs copperhead against a model you host yourself: for privacy-sensitive designs, offline or air-gapped work, and zero marginal cost. [LM Studio](https://lmstudio.ai/) serves an OpenAI-compatible endpoint, so copperhead reuses its existing chat and tool-call mapping and just changes the host.
-
-```bash
-# in LM Studio: load a tool-capable model, then Developer ▸ Start Server
-copperhead do "add reverse-polarity protection on VIN" --model lmstudio
-```
-
-No API key is involved. copperhead sends a placeholder credential rather than your `OPENAI_API_KEY`, so a local run cannot carry a cloud key to the configured endpoint, and it never falls back to a cloud provider even when a cloud key is set and the local server is failing.
-
-What is guaranteed is the destination, not the distance: prompts go to whatever `LMSTUDIO_BASE_URL` names and nowhere else. At the default `http://localhost:1234/v1` that means nothing leaves your machine. Point it at a remote host and your design content goes there instead (still unbilled and still carrying no cloud key, but no longer local).
-
-The model **must support function/tool calling**: every action copperhead takes is a tool call. Plain `lmstudio` asks the server which model to use, which requires the server to expose the OpenAI `/v1/models` endpoint. That endpoint reports what a server *can* serve, not what it has loaded, so on a server that lists more than one model (Ollama, or LM Studio with JIT loading) copperhead takes the first and says so; pin the one you want with `lmstudio:<model-id>`.
-
-Tool-capable is necessary but not sufficient. A copperhead run is a long multi-step loop over exact-match file edits, so expect smaller models to need more turns and to sometimes not converge: in our testing a 12B model completed a net rename about half the time, failing the rest on turn-budget exhaustion after looping on anchored edits. Prefer a larger coder-tuned model, and raise `--max-turns` if runs end on the budget. A failed run rolls back to the pre-run snapshot and stashes the work, so the cost of not converging is time, not a damaged board.
-
-`LMSTUDIO_BASE_URL` (default `http://localhost:1234/v1`) points at any other OpenAI-compatible server: Ollama, vLLM, or llama.cpp.
 
 ### Ordering (`export bom`)
 

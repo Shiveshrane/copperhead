@@ -346,11 +346,12 @@ describe('doctor — OpenAI-compatible endpoints (issue #110)', () => {
   });
 
   it('strips a Gemini-shaped key (AIza..., not sk-...) from the endpoint URL — regression', () => {
-    // redactSecrets' key-shape patterns (sk-, Bearer, npm_, gh*_) don't match
-    // Gemini's AIza... format or Groq's gsk_... format, and Gemini's own
-    // compat endpoint puts the key in the URL as ?key=.... Dropping the whole
-    // query/userinfo (not pattern-matching the key) is what makes this hold
-    // for every provider's key shape, not just the ones tested here.
+    // redactSecrets covers known key shapes (sk-, Bearer, npm_, gh*_, AIza,
+    // gsk_...), but a key embedded in a URL query isn't reliably one of them,
+    // and Gemini's own compat endpoint puts the key in the URL as ?key=....
+    // Dropping the whole query/userinfo (not pattern-matching the key) is
+    // what makes this hold for every provider's key shape, not just the ones
+    // tested here.
     const gemini = {
       baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai?key=AIzaSyABCDEF1234567890shouldnotleak',
       apiKeyEnv: 'GEMINI_API_KEY',

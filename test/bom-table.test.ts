@@ -284,3 +284,201 @@ describe('pinoutColumnReport (#I12 — explicit missing-column signal)', () => {
     expect(r.net).toBe(false);
   });
 });
+describe('optional outer pipes (GitHub-flavored markdown)', () => {
+  const pinout = [
+    '# Pinout',
+    '',
+    'Refdes | Pin | Net',
+    '--- | --- | ---',
+    'U1 | 1 | 3V3',
+    'U1 | 5 | KEY_DAH',
+  ].join('\n');
+
+  const bom = [
+    '# Bill of Materials',
+    '',
+    'Refdes | Value | Footprint | MPN | Rationale',
+    '--- | --- | --- | --- | ---',
+    'R1 | 10k | Resistor_SMD:R_0603_1608Metric | UNVERIFIED | from schematic',
+  ].join('\n');
+
+  it('reads a pin table written without the outer pipes', () => {
+    const rows = parsePinoutRows(pinout);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual({ ref: 'U1', pin: '1', net: '3V3' });
+    expect(rows[1]).toEqual({ ref: 'U1', pin: '5', net: 'KEY_DAH' });
+  });
+
+  it('reports the columns of a pin table written without the outer pipes', () => {
+    expect(pinoutColumnReport(pinout)).toEqual({ hasTable: true, pin: true, net: true, refdes: true });
+  });
+
+  it('reads a BOM table written without the outer pipes', () => {
+    const rows = parseBomTable(bom);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.refdes).toBe('R1');
+    expect(rows[0]!.value).toBe('10k');
+    expect(rows[0]!.footprint).toBe('Resistor_SMD:R_0603_1608Metric');
+  });
+
+  it('still reads the piped form, and both forms agree', () => {
+    const piped = [
+      '| Refdes | Pin | Net |',
+      '| --- | --- | --- |',
+      '| U1 | 1 | 3V3 |',
+      '| U1 | 5 | KEY_DAH |',
+    ].join('\n');
+    expect(parsePinoutRows(piped)).toEqual(parsePinoutRows(pinout));
+  });
+
+  it('a prose line carrying a pipe below a table is not read as a pin', () => {
+    const md = [
+      '| Refdes | Pin | Net |',
+      '|---|---|---|',
+      '| U1 | 1 | 3V3 |',
+      'Legend: A | B',
+    ].join('\n');
+    expect(parsePinoutRows(md)).toEqual([{ ref: 'U1', pin: '1', net: '3V3' }]);
+  });
+
+  it('a prose line carrying a pipe below an un-piped table is not read as a part', () => {
+    const md = [bom, 'Legend: UNVERIFIED | needs a datasheet check'].join('\n');
+    expect(parseBomTable(md).map((r) => r.refdes)).toEqual(['R1']);
+  });
+
+  it('the export reader does not read a pipe-bearing prose line as a part either', () => {
+    const md = [bom, 'Legend: UNVERIFIED | needs a datasheet check'].join('\n');
+    const flat = parseMarkdownTables(md).filter((r) => !isHeader(r));
+    expect(flat.map((r) => r.cells[0])).toEqual(['R1']);
+  });
+
+  it('the export reader ignores a prose line whose cell count matches the header', () => {
+    // The quiet variant: a matching cell count puts a real value in the MPN
+    // column, so the phantom row reaches the ordering CSV without a warning.
+    const md = [bom, '', 'Second-source options: Yageo | Vishay | KOA | Panasonic'].join('\n');
+    const flat = parseMarkdownTables(md).filter((r) => !isHeader(r));
+    expect(flat.map((r) => r.cells[0])).toEqual(['R1']);
+  });
+
+  it('a prose line carrying a pipe does not hide the table under it', () => {
+    const md = ['Nets are named `A | B` in the legend.', '| Refdes | Pin | Net |', '|---|---|---|', '| U1 | 1 | 3V3 |'].join('\n');
+    expect(parsePinoutRows(md)).toEqual([{ ref: 'U1', pin: '1', net: '3V3' }]);
+  });
+
+  it('ignores a pipe-free document', () => {
+    expect(parseCanonicalRows('# Just prose\n\nNo tables here.\n')).toEqual([]);
+  });
+  it('does not read an example table inside a fenced code block', () => {
+    const md = [
+      '| Refdes | Pin | Net |',
+      '|---|---|---|',
+      '| U1 | 1 | 3V3 |',
+      '',
+      '```markdown',
+      'Refdes | Pin | Net',
+      '--- | --- | ---',
+      'U9 | 42 | EXAMPLE_NET',
+      '```',
+    ].join('\n');
+    expect(parsePinoutRows(md)).toEqual([{ ref: 'U1', pin: '1', net: '3V3' }]);
+  });
+
+  it('the check reader and the export reader agree on an un-piped BOM', () => {
+    const checked = parseBomTable(bom);
+    const flat = parseMarkdownTables(bom).filter((r) => !isHeader(r));
+    expect(checked.map((r) => r.refdes)).toEqual(flat.map((r) => r.cells[0]));
+    expect(checked.map((r) => r.refdes)).toEqual(['R1']);
+  });
+
+  it('a shorter or different fence inside a block does not end it early', () => {
+    const b3 = '`'.repeat(3);
+    const b4 = '`'.repeat(4);
+    const md = [
+      '| Refdes | Pin | Net |',
+      '|---|---|---|',
+      '| U1 | 1 | 3V3 |',
+      '',
+      b4 + 'markdown',
+      'Example, do not parse:',
+      b3,
+      'Refdes | Pin | Net',
+      '--- | --- | ---',
+      'U9 | 42 | LEAKED',
+      '',
+      b4,
+    ].join('\n');
+    expect(parsePinoutRows(md).map((r) => r.ref)).toEqual(['U1']);
+  });
+
+  it('an over-indented delimiter inside a block is content, not a closer', () => {
+    const b3 = '`'.repeat(3);
+    const md = [
+      '| Refdes | Pin | Net |',
+      '|---|---|---|',
+      '| U1 | 1 | 3V3 |',
+      '',
+      b3 + 'markdown',
+      '    ' + b3,
+      'Refdes | Pin | Net',
+      '--- | --- | ---',
+      'U9 | 42 | LEAKED',
+      '',
+      b3,
+    ].join('\n');
+    expect(parsePinoutRows(md).map((r) => r.ref)).toEqual(['U1']);
+    // The export reader has no header filter, so it must be checked separately.
+    expect(parseMarkdownTables(md).filter((r) => !isHeader(r)).map((r) => r.cells[0])).toEqual(['U1']);
+  });
+
+  it('still treats a legally indented fence as a fence', () => {
+    const b3 = '`'.repeat(3);
+    const md = [
+      '| Refdes | Pin | Net |',
+      '|---|---|---|',
+      '| U1 | 1 | 3V3 |',
+      '',
+      '  ' + b3 + 'markdown',
+      'Refdes | Pin | Net',
+      '--- | --- | ---',
+      'U5 | 5 | EXAMPLE',
+      '',
+      '  ' + b3,
+    ].join('\n');
+    expect(parsePinoutRows(md).map((r) => r.ref)).toEqual(['U1']);
+  });
+
+  it('handles CRLF documents', () => {
+    const b3 = '`'.repeat(3);
+    const md = [
+      '| Refdes | Pin | Net |',
+      '|---|---|---|',
+      '| U1 | 1 | 3V3 |',
+      '',
+      b3 + 'markdown',
+      'Refdes | Pin | Net',
+      '--- | --- | ---',
+      'U9 | 42 | LEAKED',
+      '',
+      b3,
+    ].join('\r\n');
+    expect(parsePinoutRows(md).map((r) => r.ref)).toEqual(['U1']);
+  });
+
+  it('a tilde fence does not close a backtick fence', () => {
+    const b3 = '`'.repeat(3);
+    const md = [
+      '| Refdes | Pin | Net |',
+      '|---|---|---|',
+      '| U1 | 1 | 3V3 |',
+      '',
+      b3 + 'markdown',
+      '~~~',
+      'Refdes | Pin | Net',
+      '--- | --- | ---',
+      'U8 | 99 | LEAKED',
+      '',
+      b3,
+    ].join('\n');
+    expect(parsePinoutRows(md).map((r) => r.ref)).toEqual(['U1']);
+  });
+});

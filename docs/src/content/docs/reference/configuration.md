@@ -32,6 +32,8 @@ Written by `copperhead init`. Every key is optional; the defaults below apply wh
 | `maxTurns` | `40` | Turn budget per run. |
 | `maxRepairCycles` | `5` | ERC/DRC repair attempts before the run rolls back to the git snapshot. |
 | `budgets` | `{}` | Free-form hard constraints, surfaced verbatim into every run's system prompt. |
+| `baseURL` | unset | Base URL of an OpenAI-compatible endpoint. Read **only** by the `compat` model route. |
+| `apiKeyEnv` | `OPENAI_API_KEY` | Name of the environment variable holding that endpoint's key. The name, never the key itself. |
 
 There is also a `generatedHashes` key, maintained by copperhead. It records content hashes of the generated docs so `init` can tell an untouched file from a hand-edited one. Do not edit it by hand.
 
@@ -64,13 +66,10 @@ The constraint registry: machine-readable counterparts to the constraints stated
 | `COPPERHEAD_MODEL` | Default model. Overrides config, overridden by `--model`. |
 | `COPPERHEAD_CODEX_PATH` | Optional path to a `codex` executable. Defaults to `codex` on `PATH`; the SDK-bundled launcher is a fallback. |
 | `COPPERHEAD_CURSOR_PATH` | Optional path to the Cursor Agent CLI (`agent` / `cursor-agent`). Defaults to `agent` on `PATH`. |
-| `LMSTUDIO_BASE_URL` | Optional. Where the LM Studio server listens for `--model lmstudio` (see below). Defaults to `http://localhost:1234/v1`. No key involved. |
-| `COPPERHEAD_BASE_URL` | Optional. OpenAI-compatible endpoint for the explicit `compat:<id>` route only. |
-| `COPPERHEAD_API_KEY_ENV` | Optional. Name of the environment variable holding that endpoint's key. |
+| `LMSTUDIO_BASE_URL` | Optional. Endpoint for `--model lmstudio`; defaults to `http://localhost:1234/v1`. |
+| `COPPERHEAD_BASE_URL` | Optional. Overrides `baseURL`. Only the `compat` route reads it, so it never redirects a `gpt-5` run. |
+| `COPPERHEAD_API_KEY_ENV` | Optional. Overrides `apiKeyEnv`, e.g. `GROQ_API_KEY`. |
 | `NO_COLOR` | Optional. Disables ANSI colors in `doctor` output; colors are also skipped automatically when stdout is not a terminal. |
-| `SYNAP_API_KEY` | Optional. Enables cross-run memory. Absent, copperhead behaves exactly as before and makes no Synap calls. |
-| `SYNAP_USER_ID` | Optional memory scope. Defaults to your `git config user.email`. |
-| `SYNAP_CUSTOMER_ID` | Optional memory scope. Defaults to `copperhead`; only matters on B2B Synap instances. |
 
 A `.env` file in the working directory is read at startup, before any command resolves a model or a provider. A real environment variable always wins over the file. Copy `.env.example` to get started.
 
@@ -92,25 +91,76 @@ Set any of the first three to `codex` to use the installed Codex CLI and its sav
 
 If `codex` is not on `PATH`, point `COPPERHEAD_CODEX_PATH` at an executable explicitly. The optional SDK includes one at `node_modules/@openai/codex/bin/codex.js`; for a global installation, `$(npm root -g)/@openai/codex/bin/codex.js` resolves its path.
 
-Set any of the first three to `lmstudio` to run against a local model with no cloud account at all. A local server is never auto-detected: step 4 only ever picks a cloud provider, so `lmstudio` must be selected explicitly.
+Set any of the first three to `lmstudio` to use the configured OpenAI-compatible endpoint with no cloud API key. The default endpoint is LM Studio on localhost; a remote `LMSTUDIO_BASE_URL` receives your prompts. The provider is never auto-detected, so select it explicitly.
 
 If none of these produce a model, the command exits with an error telling you the available ways to set one. `check` never needs a model, since it makes no LLM calls at all.
 
-Accepted model values (routing is by prefix; `makeProvider` checks `codex`, then `claude-code`, then `cursor`, then `lmstudio`, then `claude`, then OpenAI):
+Accepted model values (routing is by prefix; `makeProvider` checks `compat`, then `codex`, then `claude-code`, then `cursor`, then `lmstudio`, then `claude`, then OpenAI):
+
+Two rows below both mention "OpenAI," but mean different things - worth pulling apart before the table:
+
+- **`gpt-5`** talks to OpenAI's own service, running OpenAI's own models. Needs `OPENAI_API_KEY`.
+- **`compat:<id>`** talks to somebody else's service - Google's Gemini servers, Groq's servers, OpenRouter's servers, or your own machine running Ollama. None of them are OpenAI. They're called "OpenAI-**compatible**" only because those companies chose to format their requests the same way OpenAI does, so copperhead can talk to them with the same code it already has for `gpt-5` - just pointed at a different address (`baseURL`) with a different key.
+
+So every other row below is a dedicated integration for one specific vendor's login or API. `compat:<id>` is the odd one out: a generic bridge that works for any of them, precisely because it assumes nothing about which one you're using.
 
 | Value | Provider | Key |
 | --- | --- | --- |
+| `compat:<id>` | Any OpenAI-compatible endpoint (Groq, OpenRouter, Gemini, Ollama) | the variable named by `apiKeyEnv`; none for a local endpoint |
 | `codex` / `codex:<id>` | Codex CLI, saved login | none (local Codex login) |
 | `claude-code` / `claude-code:<id>` | Claude Code, saved login | none (uses `CLAUDE_CODE_OAUTH_TOKEN` / your logged-in CLI) |
 | `cursor` / `cursor:<id>` | Cursor Agent CLI, saved login | none (`agent login`) |
-| `lmstudio` / `lmstudio:<id>` | Local LM Studio server | none (a placeholder is sent, never a cloud key) |
-| `compat:<id>` | Any OpenAI-compatible endpoint (Groq, OpenRouter, Gemini, Ollama) | the variable named by `apiKeyEnv`; none for loopback |
+| `lmstudio` / `lmstudio:<id>` | Configured OpenAI-compatible endpoint | none (a placeholder is sent, never a cloud key) |
 | `claude` / `claude-<id>` | Anthropic API | `ANTHROPIC_API_KEY` |
 | `gpt-5` / anything else | OpenAI API | `OPENAI_API_KEY` |
 
-`claude-code` is matched before the `claude` prefix, so it is never captured by the Anthropic API route. `lmstudio` is matched before the catch-all OpenAI route, so it is never sent to `api.openai.com`. Cursor runs report 0 token usage (CLI JSON has no usage fields).
+`claude-code` is matched before the `claude` prefix, so it is never captured by the Anthropic API route. `lmstudio` is matched before the OpenAI catch-all. Cursor runs report 0 token usage (CLI JSON has no usage fields).
 
-For `compat:<id>`, set `baseURL` and `apiKeyEnv` in `.copperhead/config.json`, or set `COPPERHEAD_BASE_URL` and `COPPERHEAD_API_KEY_ENV`. This endpoint configuration is read only by the explicit `compat:` route, so it cannot redirect a `gpt-5` run. A loopback endpoint needs no key.
+`lmstudio` uses `LMSTUDIO_BASE_URL` (default `http://localhost:1234/v1`) with a literal placeholder credential and never falls back to a cloud provider. Prompts go to that endpoint, so use the localhost default to keep content on your machine. Bare `lmstudio` discovers the first model returned by `/v1/models`; use `lmstudio:<model-id>` to pin a model or to bypass discovery on servers without that endpoint.
+
+For `compat:<id>`, set `baseURL` (env `COPPERHEAD_BASE_URL` or `.copperhead/config.json`) and, if the endpoint needs a key, `apiKeyEnv` (env `COPPERHEAD_API_KEY_ENV` or config). Each resolves independently - env wins over config for whichever one it sets - so you can mix sources, e.g. `baseURL` in config with `COPPERHEAD_API_KEY_ENV` as an env var. `baseURL` is required for every compat endpoint. Non-local endpoints (Gemini, Groq, OpenRouter) also need the actual key, held in the variable `apiKeyEnv` names (defaults to `OPENAI_API_KEY` if left unset) - a local endpoint (Ollama) can skip the key entirely. The three pieces below are always: the endpoint, the name of the env var holding the key, and that env var itself.
+
+**Gemini:**
+
+```bash
+export COPPERHEAD_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+export COPPERHEAD_API_KEY_ENV=GEMINI_API_KEY
+export GEMINI_API_KEY=...
+export COPPERHEAD_MODEL=compat:<model-id>   # or pass --model compat:<model-id> instead, per command
+copperhead do "..."
+```
+
+**Groq:**
+
+```bash
+export COPPERHEAD_BASE_URL=https://api.groq.com/openai/v1
+export COPPERHEAD_API_KEY_ENV=GROQ_API_KEY
+export GROQ_API_KEY=...
+export COPPERHEAD_MODEL=compat:<model-id>   # or pass --model compat:<model-id> instead, per command
+copperhead do "..."
+```
+
+**OpenRouter:**
+
+```bash
+export COPPERHEAD_BASE_URL=https://openrouter.ai/api/v1
+export COPPERHEAD_API_KEY_ENV=OPENROUTER_API_KEY
+export OPENROUTER_API_KEY=...
+export COPPERHEAD_MODEL=compat:<model-id>   # or pass --model compat:<model-id> instead, per command
+copperhead do "..."
+```
+
+**Ollama (local, no key):**
+
+```bash
+export COPPERHEAD_BASE_URL=http://localhost:11434/v1
+export COPPERHEAD_MODEL=compat:<model-id>   # or pass --model compat:<model-id> instead, per command
+copperhead do "..."
+```
+
+A local endpoint needs no key of its own, but `COPPERHEAD_API_KEY_ENV` still defaults to `OPENAI_API_KEY` when left unset, and whatever that variable holds is sent to the endpoint as a bearer token - including over the LAN if `baseURL` points at another machine (e.g. a `.local` hostname), not just loopback. If you have `OPENAI_API_KEY` exported for normal `gpt-5` use, as in the example `.env` above, that key will be sent to Ollama too unless you point `COPPERHEAD_API_KEY_ENV` at an unset variable to suppress it. Only the `compat` route reads `baseURL`, so leaving any of these set does not affect `gpt-5` or any other model.
+
+The model id after `compat:` is whatever that provider calls it (check their model list - ids and availability change over the ones shown above). `baseURL` must be the OpenAI-compatible base path specifically (the `/v1`, or `/v1beta/openai/` for Gemini), not the provider's general API root.
 
 ### Saved login (Claude Code)
 
@@ -132,48 +182,6 @@ Authentication stays entirely with the CLI: copperhead never reads, copies, or l
 
 If `agent` is not on `PATH`, set `COPPERHEAD_CURSOR_PATH`. A rate-limited `cursor` run never silently falls back to a billed API provider.
 
-### Local models (LM Studio)
-
-`--model lmstudio` points copperhead at a model you host yourself. LM Studio serves an OpenAI-compatible endpoint, so copperhead reuses its existing OpenAI chat and tool-call mapping and simply changes the host. No account is billed and no API key is involved: copperhead sends a placeholder credential, never your `OPENAI_API_KEY`, so a local run cannot carry a cloud key to the configured endpoint.
-
-Use it for privacy-sensitive designs, offline or air-gapped work, and zero-marginal-cost iteration.
-
-What copperhead guarantees is the destination, not the distance. Prompts and design content go to whatever `LMSTUDIO_BASE_URL` names and to no other host. Left at the default `http://localhost:1234/v1`, nothing leaves your machine. Point it at a remote server and that content travels there: still unbilled, still carrying no cloud credential, but no longer local. Treat the endpoint as part of your data-handling decision.
-
-Setup:
-
-1. In LM Studio, load a **tool-capable** model, one whose card advertises function/tool calling. This is not optional: every action copperhead takes is a tool call, so a model that cannot emit them cannot drive the loop.
-2. Start the server (Developer ▸ Start Server, or `lms server start`). The default endpoint is `http://localhost:1234/v1`.
-3. Run copperhead with no keys set:
-
-```sh
-copperhead do "add reverse-polarity protection on VIN" --model lmstudio
-```
-
-Plain `lmstudio` asks the server which model is loaded and uses it, so the real model id lands in your run metadata and the response cache. That lookup uses the OpenAI `/v1/models` endpoint, so on a server that does not expose one, name the model explicitly with `lmstudio:<model-id>`, which skips discovery entirely.
-
-`/v1/models` reports what a server can serve, not what it currently has loaded, and no field distinguishing the two is portable across LM Studio, Ollama, and vLLM. When the server lists more than one model, copperhead takes the first, logs which one it took and how many alternatives there were, and names it in any tool-calling error. If that is not the model you meant to run, pin it with `lmstudio:<model-id>` rather than relying on list order.
-
-Set `LMSTUDIO_BASE_URL` to point elsewhere. Since the only requirement is the OpenAI chat-completions protocol with tool calling, this also reaches other local servers:
-
-```sh
-LMSTUDIO_BASE_URL=http://localhost:11434/v1 copperhead do "..." --model lmstudio   # Ollama
-LMSTUDIO_BASE_URL=http://localhost:8000/v1  copperhead do "..." --model lmstudio   # vLLM
-```
-
-A local run never falls back to a cloud provider, even when `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` happens to be set and the local server is rate-limited or failing. An unreachable server, a server with no model loaded, and a model that rejects tool calls each fail with an actionable message and leave your tree untouched.
-
-Local models vary in how reliably they emit tool calls. If one replies with a tool call written as prose instead of a real one, copperhead detects it and steers the model back; if that repeats, the model is not tool-capable and should be swapped.
-
-### Choosing a local model
-
-Tool-capable is necessary but not sufficient. A run is a long multi-step loop over exact-match file edits, and smaller models tend to need more turns and to sometimes not converge: in our testing a 12B model completed a net rename about half the time, failing the rest on turn-budget exhaustion after repeatedly missing edit anchors. Two practical consequences:
-
-- Prefer a larger coder-tuned model where your hardware allows it.
-- If runs end on `turn-budget-exhausted` rather than an error, raise `--max-turns` before concluding the model cannot do the task.
-
-A run that does not converge is not destructive. The turn budget ends it, the working tree is restored to the pre-run snapshot, and the partial work is preserved in a git stash, so the cost is time rather than a damaged design.
-
 ## Files copperhead writes
 
 | Path | Committed? | What it is |
@@ -183,11 +191,3 @@ A run that does not converge is not destructive. The turn budget ends it, the wo
 | `.copperhead/constraints.json` | Yes | Constraint registry. |
 | `.copperhead/README.md` | Yes | Self-describing docs for the above. |
 | `.copperhead/runs/<ts>/` | No | JSONL transcript plus a human-readable `summary.md`. Gitignored. |
-
-## Cross-run memory
-
-With `SYNAP_API_KEY` set, each run recalls relevant context from earlier runs, on this board and others, into the system prompt, then records its outcome, decisions, and refusals back.
-
-In-repo docs and the KiCad files stay the source of truth. Recalled memory is advisory context layered on top, never a substitute for reading `docs/`.
-
-It needs the optional `@maximem/synap-js-sdk` package and a Python 3.11+ runtime on the host, since the JS SDK drives a Python bridge as a subprocess. If either is missing, copperhead logs a line and continues without memory.

@@ -31,7 +31,6 @@ import { CodexProvider } from './providers/codex.js';
 import { ClaudeCodeProvider } from './providers/claude-code.js';
 import { CursorProvider } from './providers/cursor.js';
 import { LMStudioProvider } from './providers/lmstudio.js';
-import { openSynapMemory, type RunRecord, type SynapMemory } from '../memory/synap.js';
 
 /** What the user sees at the moment they decide whether to keep going. */
 export interface BudgetExhaustedStats {
@@ -191,16 +190,10 @@ async function appendChangelog(
   await writeFile(p, lines.join('\n'), 'utf8');
 }
 
-/**
- * Owns the Synap session for one run. The bridge is a subprocess, so the
- * shutdown in `finally` is what lets the CLI exit; without it the process
- * hangs after a successful run.
- */
 export async function runAgentLoop(opts: RunOptions): Promise<RunResult> {
-  const memory = await openSynapMemory({ repoRoot: opts.repoRoot, log: opts.log });
   const providers = new Set<Provider>();
   try {
-    return await runWithMemory(opts, memory, providers);
+    return await runWithProviders(opts, providers);
   } finally {
     for (const provider of providers) {
       try {
@@ -209,15 +202,10 @@ export async function runAgentLoop(opts: RunOptions): Promise<RunResult> {
         opts.log?.(`warning: ${provider.name} provider cleanup failed (${(err as Error).message})`);
       }
     }
-    await memory?.close();
   }
 }
 
-async function runWithMemory(
-  opts: RunOptions,
-  memory: SynapMemory | null,
-  providers: Set<Provider>,
-): Promise<RunResult> {
+async function runWithProviders(opts: RunOptions, providers: Set<Provider>): Promise<RunResult> {
   const r = opts.renderer ?? plainRenderer(opts.log ?? ((l: string) => console.log(l)));
   const log = (l: string): void => r.log(l);
   const repoRoot = opts.repoRoot;
@@ -349,36 +337,11 @@ async function runWithMemory(
       ...reopened.map((r) => `- ${r.key} affects ${r.item}`),
     ].join('\n');
   }
-  // Cross-run memory is appended after the repo's own docs and constraints so
-  // that the in-repo sources of truth are what the model reads first.
-  const recalled = memory ? await memory.recall(opts.request) : null;
-  if (recalled) {
-    await transcript.event('synap-recall', { chars: recalled.length });
-    log('recalled prior context from Synap memory');
-  }
-  const system = recalled ? `${basePrompt}\n\n${recalled}` : basePrompt;
   const messages: Msg[] = [
-    { role: 'system', content: system },
+    { role: 'system', content: basePrompt },
     { role: 'user', content: opts.stagePrompt ? `${opts.stagePrompt}\n\nRequest: ${opts.request}` : opts.request },
   ];
   await transcript.event('run-start', meta);
-
-  /**
-   * A memory write that fails is reported rather than swallowed, but it does
-   * not change the run's outcome: discarding a verified commit because a
-   * third-party write failed would be the worse trade.
-   */
-  const remember = async (run: RunRecord): Promise<void> => {
-    if (!memory) return;
-    try {
-      await memory.record(run);
-      await transcript.event('synap-record', { outcome: run.outcome });
-    } catch (err) {
-      const message = (err as Error).message;
-      log(`warning: Synap memory write failed (${message}); this run was not recorded`);
-      await transcript.event('synap-record-failed', { error: message });
-    }
-  };
 
   let tokensIn = 0;
   let tokensOut = 0;
@@ -669,17 +632,6 @@ async function runWithMemory(
           env: meta,
           stats: runStats,
         });
-        // Refusals are the most valuable thing to remember: they encode a budget
-        // or constraint that this user's designs keep running into.
-        await remember({
-          request: opts.request,
-          outcome: 'refused',
-          summary,
-          changeId: ctx.changeId,
-          filesTouched: [],
-          decisions: ctx.decisions,
-          verification: 'n/a (refused before verification)',
-        });
         log(`refused: ${summary}`);
         r.finish(outcomeLine(runStats));
         return {
@@ -805,15 +757,6 @@ async function runWithMemory(
         openObligations: null,
         env: meta,
         stats: runStats,
-      });
-      await remember({
-        request: opts.request,
-        outcome: 'success',
-        summary,
-        changeId: ctx.changeId,
-        filesTouched: files,
-        decisions: ctx.decisions,
-        verification,
       });
       log(`committed ${commit.slice(0, 10)} (${files.length} file(s))`);
       r.finish(outcomeLine(runStats, `committed ${commit.slice(0, 10)}`));
