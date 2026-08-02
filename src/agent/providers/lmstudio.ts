@@ -69,6 +69,14 @@ export class LMStudioProvider extends OpenAIProvider {
     return this.baseURL ?? LMSTUDIO_DEFAULT_BASE_URL;
   }
 
+  cacheKeyEndpoint(): string {
+    return this.endpoint;
+  }
+
+  needsModelDiscovery(): boolean {
+    return !this.model;
+  }
+
   /**
    * Public entry point for discovery, so `loop.ts` can learn the real model id
    * before it builds the response cache and the run metadata — those are

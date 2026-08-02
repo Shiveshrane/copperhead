@@ -261,7 +261,9 @@ async function runWithProviders(opts: RunOptions, providers: Set<Provider>): Pro
   const MODEL_PROBE_TIMEOUT_MS = 10_000;
   let probedModel: string | undefined;
   if (provider.resolvedModelId) {
-    log(`asking ${opts.model} which model is loaded`);
+    if (provider.needsModelDiscovery?.()) {
+      log(`asking ${provider.cacheKeyEndpoint?.() ?? opts.model} which model is loaded`);
+    }
     probedModel = await withTimeout(
       async () => provider.resolvedModelId?.(log),
       MODEL_PROBE_TIMEOUT_MS,
@@ -289,7 +291,7 @@ async function runWithProviders(opts: RunOptions, providers: Set<Provider>): Pro
       path.join(repoRoot, CONFIG_DIR, 'llm-cache'),
       log,
       effectiveModel,
-      isCompatModel(opts.model) ? compatSettings.baseURL : undefined,
+      isCompatModel(opts.model) ? compatSettings.baseURL : provider.cacheKeyEndpoint?.(),
     );
   }
   providers.add(provider);

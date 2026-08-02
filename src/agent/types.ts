@@ -61,4 +61,8 @@ export interface Provider {
    * cannot say which is loaded). Optional so existing providers are unaffected.
    */
   resolvedModelId?(log?: (line: string) => void): Promise<string>;
+  /** Endpoint that identifies this backend for response-cache isolation. */
+  cacheKeyEndpoint?(): string | undefined;
+  /** Whether resolving the model id makes a network discovery request. */
+  needsModelDiscovery?(): boolean;
 }

@@ -1,10 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   LMStudioProvider,
   LMSTUDIO_DEFAULT_BASE_URL,
 } from '../src/agent/providers/lmstudio.js';
 import { OpenAIProvider, type ChatClientLike, type ChatRequestLike } from '../src/agent/providers/openai.js';
 import { makeProvider } from '../src/agent/loop.js';
+import { CachingProvider } from '../src/agent/response-cache.js';
 import { isRateLimit } from '../src/util/retry.js';
 import type { Msg, ToolSchema } from '../src/agent/types.js';
 
@@ -191,6 +195,27 @@ describe('LMStudioProvider — no fallback to a billed provider', () => {
 });
 
 describe('LMStudioProvider — model id resolution', () => {
+  it('scopes cached turns to the configured endpoint', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'copperhead-lmstudio-cache-'));
+    let calls = 0;
+    const inner = {
+      name: 'lmstudio',
+      async chat() {
+        calls++;
+        return { text: 'ok', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 } };
+      },
+    };
+    try {
+      const first = new LMStudioProvider({ model: 'same-model', baseURL: 'http://first.example/v1', client: fakeClient() });
+      const second = new LMStudioProvider({ model: 'same-model', baseURL: 'http://second.example/v1', client: fakeClient() });
+      await new CachingProvider(inner, dir, undefined, 'same-model', first.cacheKeyEndpoint()).chat(messages, tools);
+      await new CachingProvider(inner, dir, undefined, 'same-model', second.cacheKeyEndpoint()).chat(messages, tools);
+      expect(calls).toBe(2);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('probes the server once for a bare lmstudio and reuses the answer', async () => {
     let lists = 0;
     const sent: ChatRequestLike[] = [];
@@ -239,6 +264,11 @@ describe('LMStudioProvider — model id resolution', () => {
     });
     expect(await provider.resolvedModelId?.()).toBe('llama-3.3-70b');
     expect(lists).toBe(0);
+  });
+
+  it('identifies when bare routing needs discovery, while an explicit id does not', () => {
+    expect(new LMStudioProvider({ client: fakeClient() }).needsModelDiscovery()).toBe(true);
+    expect(new LMStudioProvider({ model: 'llama-3.3-70b', client: fakeClient() }).needsModelDiscovery()).toBe(false);
   });
 
   it('never probes when the model id is given explicitly', async () => {

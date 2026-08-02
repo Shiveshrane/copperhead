@@ -148,7 +148,7 @@ describe('resolved model id reaches the run (F6 wiring)', () => {
   });
 
   it('a rate-limited local run fails instead of failing over to a billed provider', async () => {
-    // AC-3.13's no-fallback guarantee, driven through the real failover path
+    // AC-3.21's no-fallback guarantee, driven through the real failover path
     // rather than asserted by proxy on the provider name. Both cloud keys are
     // set, so a provider that did fail over would visibly switch here.
     const { repo, cleanup } = await tempFixtureRepo();

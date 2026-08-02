@@ -33,7 +33,7 @@ const providers: { model: string; key: string | undefined }[] = [
     model: process.env.COPPERHEAD_TEST_CURSOR_MODEL ?? 'cursor',
     key: process.env.COPPERHEAD_TEST_CURSOR === '1' ? 'saved-cursor-login' : undefined,
   },
-  // Local LM Studio (AC-3.10, AC-3.13): opt-in, because it needs a running local
+  // Local LM Studio (AC-3.10, AC-3.21): opt-in, because it needs a running local
   // server with a tool-capable model loaded and there is no credential whose
   // presence could imply that. Same shape as the COPPERHEAD_TEST_CODEX gate.
   {
@@ -197,15 +197,25 @@ async function scanTreeForSecret(dir: string, pattern: RegExp, root = dir): Prom
 }
 
 describe.skipIf(!providers.some((p) => p.key))('safety net', () => {
-  it('AC-4.1: no API key material anywhere in the tree after runs', async () => {
-    const { repo, cleanup } = await tempFixtureRepo();
+  it('AC-4.1: no API key material anywhere in the tree after a real run', async () => {
+    // A pristine repo has no transcript or summary to scan. One turn is enough
+    // to create both artifacts while the structural edit gate keeps the run fast.
+    const { model } = providers.find((p) => p.key)!;
+    const { repo, cleanup } = await setupRepo();
     try {
+      await runAgentLoop({
+        repoRoot: repo,
+        request: 'rename net KEY_DAH to KEY_DASH',
+        model,
+        maxTurns: 1,
+        log: () => {},
+      });
       const matches = await scanTreeForSecret(repo, /sk-[A-Za-z0-9_-]+/);
       expect(matches).toEqual([]);
     } finally {
       await cleanup();
     }
-  });
+  }, 600_000);
 });
 
 function diffLineCount(a: string, b: string): number {
