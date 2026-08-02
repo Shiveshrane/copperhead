@@ -69,9 +69,6 @@ The constraint registry: machine-readable counterparts to the constraints stated
 | `COPPERHEAD_BASE_URL` | Optional. Overrides `baseURL`. Only the `compat` route reads it, so it never redirects a `gpt-5` run. |
 | `COPPERHEAD_API_KEY_ENV` | Optional. Overrides `apiKeyEnv`, e.g. `GROQ_API_KEY`. |
 | `NO_COLOR` | Optional. Disables ANSI colors in `doctor` output; colors are also skipped automatically when stdout is not a terminal. |
-| `SYNAP_API_KEY` | Optional. Enables cross-run memory. Absent, copperhead behaves exactly as before and makes no Synap calls. |
-| `SYNAP_USER_ID` | Optional memory scope. Defaults to your `git config user.email`. |
-| `SYNAP_CUSTOMER_ID` | Optional memory scope. Defaults to `copperhead`; only matters on B2B Synap instances. |
 
 A `.env` file in the working directory is read at startup, before any command resolves a model or a provider. A real environment variable always wins over the file. Copy `.env.example` to get started.
 
@@ -188,11 +185,3 @@ If `agent` is not on `PATH`, set `COPPERHEAD_CURSOR_PATH`. A rate-limited `curso
 | `.copperhead/constraints.json` | Yes | Constraint registry. |
 | `.copperhead/README.md` | Yes | Self-describing docs for the above. |
 | `.copperhead/runs/<ts>/` | No | JSONL transcript plus a human-readable `summary.md`. Gitignored. |
-
-## Cross-run memory
-
-With `SYNAP_API_KEY` set, each run recalls relevant context from earlier runs, on this board and others, into the system prompt, then records its outcome, decisions, and refusals back.
-
-In-repo docs and the KiCad files stay the source of truth. Recalled memory is advisory context layered on top, never a substitute for reading `docs/`.
-
-It needs the optional `@maximem/synap-js-sdk` package and a Python 3.11+ runtime on the host, since the JS SDK drives a Python bridge as a subprocess. If either is missing, copperhead logs a line and continues without memory.
