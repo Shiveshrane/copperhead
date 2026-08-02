@@ -155,7 +155,7 @@ export COPPERHEAD_MODEL=compat:<model-id>   # or pass --model compat:<model-id> 
 copperhead do "..."
 ```
 
-Leave `COPPERHEAD_API_KEY_ENV` unset for a local endpoint - no key is sent. Only the `compat` route reads `baseURL`, so leaving any of these set does not affect `gpt-5` or any other model.
+A local endpoint needs no key of its own, but `COPPERHEAD_API_KEY_ENV` still defaults to `OPENAI_API_KEY` when left unset, and whatever that variable holds is sent to the endpoint as a bearer token - including over the LAN if `baseURL` points at another machine (e.g. a `.local` hostname), not just loopback. If you have `OPENAI_API_KEY` exported for normal `gpt-5` use, as in the example `.env` above, that key will be sent to Ollama too unless you point `COPPERHEAD_API_KEY_ENV` at an unset variable to suppress it. Only the `compat` route reads `baseURL`, so leaving any of these set does not affect `gpt-5` or any other model.
 
 The model id after `compat:` is whatever that provider calls it (check their model list - ids and availability change over the ones shown above). `baseURL` must be the OpenAI-compatible base path specifically (the `/v1`, or `/v1beta/openai/` for Gemini), not the provider's general API root.
 

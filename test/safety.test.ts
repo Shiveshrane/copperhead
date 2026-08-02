@@ -88,6 +88,13 @@ describe('secret redaction (AC-4.1)', () => {
     expect(out).toBe('[REDACTED] [REDACTED]');
   });
 
+  it('redacts a Google key with a prefix other than AIzaSy — regression', () => {
+    // AIzaSy is the common fifth/sixth pair but not the only one Google
+    // issues; the pattern must match on AIza alone.
+    const out = redactSecrets('AIzaBcD1234567890abcdefghijklmnopqrstu');
+    expect(out).toBe('[REDACTED]');
+  });
+
   it('leaves ordinary prose alone', () => {
     // The patterns are deliberately broad, but not so broad that a run summary
     // loses readable text.
@@ -96,6 +103,8 @@ describe('secret redaction (AC-4.1)', () => {
       'Bearer token missing',
       'a npm_ package name',
       'see the github_pat docs',
+      'a gsk_ prefixed identifier',
+      'an AIza-prefixed placeholder',
     ]) {
       expect(redactSecrets(text), text).toBe(text);
     }

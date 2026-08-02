@@ -16,8 +16,11 @@ const PATTERNS: RegExp[] = [
   /gh[pousr]_[A-Za-z0-9]{36,}/g,
   /github_pat_[A-Za-z0-9_]{22,}/g,
   // Gemini and Groq keys: same idea as sk- above, just a different prefix.
-  /AIzaSy[A-Za-z0-9_-]+/g,
-  /gsk_[A-Za-z0-9]+/g,
+  // Real keys are AIza + 35 chars, but AIzaSy (the common fifth/sixth pair)
+  // isn't the only prefix Google issues - match on AIza alone so other
+  // Google keys aren't left unredacted.
+  /AIza[A-Za-z0-9_-]{20,}/g,
+  /gsk_[A-Za-z0-9]{20,}/g,
 ];
 
 export function redactSecrets(text: string): string {
