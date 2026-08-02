@@ -131,9 +131,9 @@ export function checkCredential(
     const settings = compat ?? { apiKeyEnv: DEFAULT_API_KEY_ENV };
     // Display only: some endpoints embed a credential in the URL itself (a
     // query param, userinfo) — Gemini's compat endpoint does this with
-    // ?key=..., in a format redactSecrets' key-shape patterns don't cover.
-    // Drop the query and userinfo entirely rather than pattern-matching, so
-    // this holds regardless of what a given provider's key looks like.
+    // ?key=.... redactSecrets covers known key shapes, but a key embedded in
+    // a URL query isn't reliably one of them, so drop the query and userinfo
+    // entirely rather than pattern-matching, regardless of shape.
     // isLocalEndpoint() below still runs against the raw settings.baseURL,
     // never this.
     const where = (() => {
